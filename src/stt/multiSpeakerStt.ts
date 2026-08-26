@@ -7,34 +7,52 @@ import { SttEngine, type SttEngineOptions } from "./sttEngine.js";
  * 持たせる」方針の実装。Discord側で既にユーザー単位にストリームが
  * 分離されているため、話者間のturn-takingラベリングは不要
  * （呼び出し側がspeakerIdごとに別々にpushSamplesすればよい）。
+ *
+ * OfflineRecognizer(160MB超のONNXモデル)はステートレスなので、
+ * ここで1つだけ構築して全話者のSttEngineで共有する。話者ごとに
+ * 持つのはVad+CircularBuffer(数MB、軽量)だけにすることで、
+ * 話者数が増えてもメモリ使用量が線形に膨らまないようにしている
+ * （Opusによるレビューで指摘された設計。詳細はCLAUDE.md参照）。
  */
 export class MultiSpeakerStt {
   private engines = new Map<string, SttEngine>();
+  private sharedRecognizer: SttEngineOptions["recognizer"];
 
-  constructor(private engineOptions: SttEngineOptions) {}
+  constructor(private engineOptions: SttEngineOptions) {
+    if (!engineOptions.recognizer) {
+      if (!engineOptions.modelDir) {
+        throw new Error("MultiSpeakerStt: modelDir か recognizer のどちらかが必要です。");
+      }
+      this.sharedRecognizer = SttEngine.createRecognizer(engineOptions.modelDir);
+    }
+  }
+
+  private createEngine(): SttEngine {
+    return new SttEngine({
+      ...this.engineOptions,
+      recognizer: this.engineOptions.recognizer ?? this.sharedRecognizer,
+    });
+  }
 
   /** 指定話者のSttEngineを取得する。無ければ新規作成する。 */
   getEngine(speakerId: string): SttEngine {
     let engine = this.engines.get(speakerId);
     if (!engine) {
-      engine = new SttEngine(this.engineOptions);
+      engine = this.createEngine();
       this.engines.set(speakerId, engine);
     }
     return engine;
   }
 
   /**
-   * 1発話セッション（Discordなら speaking start〜end の1区間）が終わる
-   * たびに呼ぶ。VAD/内部バッファの状態を発話間で持ち越さないよう、
-   * 次回のために新しいSttEngineに差し替える。
-   *
-   * 実測で、同一SttEngineを複数の発話セッションにまたがって使い回すと
-   * sherpa-onnxのネイティブ層で "circular-buffer.cc: Invalid n" という
-   * エラーが稀に発生することを確認した(docs/archive/openai-test-handoff.md参照)。
-   * 発話セッションごとに作り直すことでこの問題を回避する。
+   * 1発話セッション（Discordなら speaking start〜end の1区間）が終わった
+   * 後や、デコードエラー等の異常系の後に呼ぶ。VAD内部状態とバッファを
+   * リセットする（モデル自体は共有のまま再ロードしない、軽量な操作）。
+   * `SttEngine.flush()` はこれを自動で呼ぶため、通常は明示呼び出し不要。
+   * エラー経路（flush()を経由しない）でのフォローアップ用に用意している。
    */
   resetSpeaker(speakerId: string): void {
-    this.engines.set(speakerId, new SttEngine(this.engineOptions));
+    this.engines.get(speakerId)?.reset();
   }
 
   /** 話者がボイスチャンネルを離れた等、もう使わなくなったら呼ぶ。 */

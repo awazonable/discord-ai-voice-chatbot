@@ -2,12 +2,20 @@
 import sherpa_onnx from "sherpa-onnx-node";
 
 export interface SttEngineOptions {
-  modelDir: string;
+  /** recognizerを渡さない場合はここからOfflineRecognizerを新規構築する。 */
+  modelDir?: string;
   vadModelPath: string;
   /** VAD/認識モデルが要求するサンプルレート。sherpa-onnxのReazonSpeechモデルは16kHz。 */
   sampleRate?: number;
   /** 無音判定の閾値(秒)。stt-design.mdの初期値を踏襲。 */
   minSilenceDurationSec?: number;
+  /**
+   * 既存のOfflineRecognizerを共有する場合に指定する(MultiSpeakerStt用)。
+   * OfflineRecognizerはステートレス(認識状態はcreateStream()が返す
+   * stream側に持たれる)なので、話者間で安全に共有できる。1つ160MB超
+   * あるモデルを話者ごとに複製しないための最適化。
+   */
+  recognizer?: InstanceType<typeof sherpa_onnx.OfflineRecognizer>;
 }
 
 export interface RecognizedSegment {
@@ -42,19 +50,14 @@ export class SttEngine {
   constructor(opts: SttEngineOptions) {
     this.targetSampleRate = opts.sampleRate ?? 16000;
 
-    this.recognizer = new sherpa_onnx.OfflineRecognizer({
-      modelConfig: {
-        transducer: {
-          encoder: `${opts.modelDir}/encoder-epoch-99-avg-1.int8.onnx`,
-          decoder: `${opts.modelDir}/decoder-epoch-99-avg-1.onnx`,
-          joiner: `${opts.modelDir}/joiner-epoch-99-avg-1.int8.onnx`,
-        },
-        tokens: `${opts.modelDir}/tokens.txt`,
-        numThreads: 2,
-        provider: "cpu",
-        debug: 0,
-      },
-    });
+    if (opts.recognizer) {
+      this.recognizer = opts.recognizer;
+    } else {
+      if (!opts.modelDir) {
+        throw new Error("SttEngine: modelDir か recognizer のどちらかが必要です。");
+      }
+      this.recognizer = SttEngine.createRecognizer(opts.modelDir);
+    }
 
     const windowSize = 512;
     this.vad = new sherpa_onnx.Vad(
@@ -74,6 +77,24 @@ export class SttEngine {
     );
     this.windowSize = windowSize;
     this.buffer = new sherpa_onnx.CircularBuffer(30 * this.targetSampleRate);
+  }
+
+  static createRecognizer(
+    modelDir: string
+  ): InstanceType<typeof sherpa_onnx.OfflineRecognizer> {
+    return new sherpa_onnx.OfflineRecognizer({
+      modelConfig: {
+        transducer: {
+          encoder: `${modelDir}/encoder-epoch-99-avg-1.int8.onnx`,
+          decoder: `${modelDir}/decoder-epoch-99-avg-1.onnx`,
+          joiner: `${modelDir}/joiner-epoch-99-avg-1.int8.onnx`,
+        },
+        tokens: `${modelDir}/tokens.txt`,
+        numThreads: 2,
+        provider: "cpu",
+        debug: 0,
+      },
+    });
   }
 
   /**
@@ -125,7 +146,25 @@ export class SttEngine {
       const r = this.decodeSegment(segment.samples);
       if (r) results.push(r);
     }
+    // vad.flush()はバッファを空にするだけでSileroモデルの内部状態
+    // (triggered_フラグ等)をクリアしない(sherpa-onnx側の既知の挙動)。
+    // クリアしないまま次の発話セッションに使うと、VAD内部のインデックス
+    // 計算が負値になりネイティブ層で例外が出ることを実測で確認した
+    // (circular-buffer.cc: Invalid n。docs/archive/openai-test-handoff.md参照)。
+    // flush()の直後は必ず完全リセットする。
+    this.reset();
     return results;
+  }
+
+  /**
+   * VAD内部状態とウィンドウ用バッファを完全にリセットする。
+   * モデル(ONNX)自体は再ロードしないため軽量（エンジンを丸ごと
+   * 作り直すより大幅に安い）。通常はflush()が自動で呼ぶため、
+   * 明示的な呼び出しは異常系のフォローアップ等でのみ必要。
+   */
+  reset(): void {
+    this.vad.reset();
+    this.buffer.reset();
   }
 
   private decodeSegment(rawSamples: Float32Array): RecognizedSegment | null {

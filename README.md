@@ -59,6 +59,7 @@ gh release download asr-models -R k2-fsa/sherpa-onnx -p "silero_vad_v5.onnx"
 | `npm run discord:receive-test` | 必要(Discord) | なし | ボイスチャンネルでの発話を受信しSTTで認識(要: 人間が実際に話す) |
 | `npm run test:judge-optimization` | 不要 | なし | ウェイクワードのみの発話でLLM判定がスキップされることを確認 |
 | `npm run test:multi-speaker` | 不要 | なし | 異なる話者の発言に別々のnameが付くことを確認 |
+| `npm run test:wakeword` | 不要 | なし | ウェイクワード検出が口語表現「〜んだもん」と衝突しないことを確認 |
 
 ### 1. モックLLMでロジック検証（API課金なし）
 
@@ -217,6 +218,7 @@ test/
   runTTSErrorTests.ts     SushikiTTSClientの異常系テスト
   testJudgeOptimization.ts 判定コスト最適化(ウェイクワードのみの発話でLLM省略)の検証
   testMultiSpeaker.ts     複数話者の発言がnameで区別されることの検証
+  testWakeword.ts         ウェイクワード検出の位置限定マッチの検証
 ```
 
 ### APIキー無しで preflight / scenarios:real を試す

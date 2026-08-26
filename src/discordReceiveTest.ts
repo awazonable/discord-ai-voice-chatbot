@@ -79,6 +79,13 @@ async function main() {
   console.log(`  ✓ 接続確立。ボイスチャンネル「${voiceChannel.name}」で話しかけてください。\n`);
   console.log("  (60秒間受信します。無音1秒で1発話として確定します)\n");
 
+  // 話者がボイスチャンネルを離れたら、もう使わないSttEngineを解放する。
+  client.on("voiceStateUpdate", (oldState, newState) => {
+    if (oldState.channelId === devChannelIdVoice && newState.channelId !== devChannelIdVoice) {
+      stt.removeSpeaker(oldState.id);
+    }
+  });
+
   // Discordの speaking "start" は、同一の発話中でも短い間が空くたびに
   // 何度も発火する(実測で1発話につき10回以上)。そのたびにsubscribe()する
   // と同じ音声ストリームに対して複数のOpusデコーダが同時に読み書きする
@@ -114,17 +121,19 @@ async function main() {
     });
     decoder.on("end", () => {
       activeSubscriptions.delete(userId);
+      // engine.flush()内でVAD状態を完全リセットするので、ここで改めて
+      // resetSpeaker()する必要はない(circular-bufferバグ対策済み)。
       const results = engine.flush();
       for (const r of results) {
         console.log(`  >>> [${user?.tag ?? userId}] "${r.text}" (flush)`);
       }
-      // 発話セッションごとにエンジンを作り直す(VAD/バッファの状態を
-      // 次回に持ち越さない。circular-bufferのネイティブエラー対策)。
-      stt.resetSpeaker(userId);
       console.log(`  🔇 発話終了: ${user?.tag ?? userId}`);
     });
     decoder.on("error", (err) => {
       activeSubscriptions.delete(userId);
+      // エラー時はflush()を経由しないため、状態が汚れたまま残らないよう
+      // 明示的にリセットする。
+      stt.resetSpeaker(userId);
       console.error("  [デコードエラー]", err);
     });
   });

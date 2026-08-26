@@ -122,8 +122,12 @@ LLMに渡すトークンを4種類に整理し、それぞれ扱いを変える�
 1. STT〜呼びかけ検知〜LLM層の実配線: STT単体の疎通は確認済み
    （`src/stt/`、`npm run stt:test` / `stt:stream-test`）。
    `ZundamonSession.onFinalUtterance`への本配線はまだ。
-   ウェイクワード認識精度の課題（保留中、`docs/archive/openai-test-handoff.md`）
-   を解決してから配線するか判断すること
+   ウェイクワード認識精度の課題は、Opusのレビュー（CLAUDE.md参照）を
+   踏まえて`detectWakeWord`を位置限定マッチ（発話冒頭3文字以内）に
+   変更し、「んだもん」まで欠落するケースも安全に許容できるようにした
+   （`test/testWakeword.ts`で口語表現「〜んだもん」との衝突が無いことを
+   確認）。VAD自体の音声欠落(pre-rollバッファ)は未着手だが、上記の
+   回避策により本配線をブロックする理由は無くなった
 2. ~~VOICEVOX層との接続~~ → 解決済み。`onSentenceReady`を実際の合成+
    スピーカー再生(`RealPlaybackQueue`)につなぎ込み、`npm run cli`で
    テキスト入力→実音声再生まで通しで動作することを確認した
@@ -133,8 +137,9 @@ LLMに渡すトークンを4種類に整理し、それぞれ扱いを変える�
    discord:receive-test`（実際の発話をSTTで認識、話者ごとに
    `MultiSpeakerStt`で分離）で確認した。native buildを避けopusscript
    (pure JS Opus) + libsodium-wrappers(pure JS/WASM暗号化)を採用。
-   **未対応**: `ZundamonSession`本体への配線（項目1のウェイクワード課題と
-   同じ理由で保留）。既知バグは項目8参照
+   **未対応**: `ZundamonSession`本体への配線。項目8のバグ修正は完了、
+   項目1のウェイクワード課題も回避策を入れたため、配線自体はいつでも
+   着手できる状態
 4. ~~記憶DBのスキーマ・ベクトル化方式~~ → 解決済み（本ドキュメントの
    「記憶(DB)層」参照）。残課題: 長期記憶の自動保存判定の精度検証・
    短期記憶の圧縮閾値のチューニング
@@ -153,9 +158,13 @@ LLMに渡すトークンを4種類に整理し、それぞれ扱いを変える�
    これは意図した設計 — 詳細はstt-design.md「Discord音声受信との接続」）
 7. newRoundのバックログ破棄における「打ち切り意図」判定の精度検証
    （`docs/archive/openai-test-handoff.md`参照）
-8. Discord音声受信の既知バグ（保留中）: `circular-buffer.cc: Invalid n`
-   というネイティブ層エラーが同一ユーザーの2発話目以降で発生することが
-   ある（自己回復するが該当区間の認識が壊れる）。原因はおそらく
-   `SttEngine`をユーザーごとに使い回す際、発話セッション間でVAD/バッファの
-   内部状態がクリーンにリセットされていないこと。詳細は
-   `docs/archive/openai-test-handoff.md`参照
+8. ~~Discord音声受信のcircular-bufferバグ~~ → 修正済み。Opusのレビュー
+   （CLAUDE.md参照）でsherpa-onnx本体のソースから原因を確定: `Vad.flush()`
+   がバッファを空にするだけでSileroモデルの内部状態(triggered_フラグ)を
+   クリアしないupstreamのバグだった。`SttEngine.reset()`を実装し、
+   `flush()`実行後に自動でVAD/バッファを完全リセットするようにした
+   （モデル自体は再ロードしない軽量な操作）。あわせて`OfflineRecognizer`
+   （160MB超・ステートレス）を話者間で共有する設計に変更し
+   （`MultiSpeakerStt`）、話者数に対するメモリ増加を防いだ。
+   **未検証**: 実際にDiscordで複数回発話してエラーが再発しないかの
+   実地確認はまだ（自動テスト・型チェックのみ実施済み）
