@@ -1,4 +1,5 @@
 import type { LLMClient, ChatMessage } from "../llm/types.js";
+import { isAbortError } from "../llm/errors.js";
 import type { SessionEvents, SessionState, Utterance } from "./types.js";
 import { detectWakeWord } from "./wakeword.js";
 import { SentenceStreamBuffer } from "./sentenceBuffer.js";
@@ -40,6 +41,14 @@ export class ZundamonSession {
     return this.state;
   }
 
+  private reportError(err: unknown, context: string) {
+    if (this.events.onError) {
+      this.events.onError(err, context);
+    } else {
+      console.error(`[${context}]`, err);
+    }
+  }
+
   /** VADのfinal確定テキストが来るたびに呼ばれる */
   async onFinalUtterance(utt: Utterance) {
     if (this.state === "IDLE") {
@@ -59,14 +68,28 @@ export class ZundamonSession {
 
   private async handleWake(utt: Utterance) {
     const primaryPhrase =
-      PRIMARY_RESPONSES[Math.floor(Math.random() * PRIMARY_RESPONSES.length)];
+      PRIMARY_RESPONSES[Math.floor(Math.random() * PRIMARY_RESPONSES.length)]!;
     this.events.onPrimaryResponsePlay(primaryPhrase);
 
     this.setState("AWAKENED");
     this.conversationLog.push({ role: "user", content: utt.text });
 
     this.startGraceTimer();
-    this.runRound(this.conversationLog);
+    this.startRound();
+  }
+
+  /**
+   * ラウンドはバックグラウンドで走らせる（await しない）。
+   * 生成中も次の発話を受け付けるためだが、そのままだと例外が
+   * unhandled rejection になるので必ずここで捕まえる。
+   */
+  private startRound() {
+    void this.runRound(this.conversationLog).catch((err) => {
+      if (isAbortError(err)) return;
+      this.reportError(err, "runRound");
+      this.abortController = null;
+      this.setState("IDLE");
+    });
   }
 
   private startGraceTimer() {
@@ -78,15 +101,29 @@ export class ZundamonSession {
 
   private async handleFollowup(utt: Utterance) {
     const judgeController = new AbortController();
-    const { isContinuation, reasoning } = await this.llm.judgeContinuation(
-      this.conversationLog,
-      utt.text,
-      judgeController.signal
-    );
 
-    console.log(
-      `  [判定] "${utt.text}" -> continuation=${isContinuation} (${reasoning})`
-    );
+    let isContinuation: boolean;
+    let reasoning: string;
+    try {
+      ({ isContinuation, reasoning } = await this.llm.judgeContinuation(
+        this.conversationLog,
+        utt.text,
+        judgeController.signal
+      ));
+    } catch (err) {
+      if (isAbortError(err)) return;
+      // 判定が落ちても進行中の応答は壊さない。継続なしとして扱う。
+      this.reportError(err, "judgeContinuation");
+      return;
+    }
+
+    if (this.events.onJudge) {
+      this.events.onJudge(isContinuation, reasoning, utt.text);
+    } else {
+      console.log(
+        `  [判定] "${utt.text}" -> continuation=${isContinuation} (${reasoning})`
+      );
+    }
 
     if (!isContinuation) {
       return;
@@ -97,16 +134,24 @@ export class ZundamonSession {
       this.graceTimer = null;
     }
 
+    this.conversationLog.push({ role: "user", content: utt.text });
+
+    // 実APIでは judgeContinuation に数百ms〜数秒かかる。その間に
+    // ラウンドが完走していると abortController は既に null になっており、
+    // ここで中断要求を出しても誰も見ないまま発話が握り潰される。
+    // ラウンドが生きているかどうかで扱いを分ける。
     if (this.abortController) {
       // 即座にabortはしない。文単位のグレースフル中断要求を出すだけ。
       this.events.onSpeechInterrupted(
         "第2ラウンドの発話により中断要求（現在の文は言い切らせる）"
       );
       this.sentenceBuffer.requestInterrupt();
+      this.pendingFollowup = utt.text;
+    } else {
+      // 判定中にラウンドが終わっていた場合は、中断ではなく新しい
+      // ラウンドとして即座に走らせる。
+      this.startRound();
     }
-
-    this.conversationLog.push({ role: "user", content: utt.text });
-    this.pendingFollowup = utt.text;
   }
 
   private async runRound(messages: ChatMessage[]) {
@@ -152,7 +197,9 @@ export class ZundamonSession {
         }
       }
     } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") {
+      // モックは DOMException、OpenAI SDK は APIUserAbortError を投げる。
+      if (isAbortError(err)) {
+        this.abortController = null;
         return;
       }
       throw err;
@@ -160,13 +207,17 @@ export class ZundamonSession {
 
     if (interruptedGracefully) {
       this.abortController.abort();
+      this.abortController = null;
       const followup = this.pendingFollowup;
       if (followup) {
-        this.runRound(this.conversationLog);
+        this.startRound();
+      } else {
+        this.setState("IDLE");
       }
       return;
     }
 
+    this.abortController = null;
     this.conversationLog.push({
       role: "assistant",
       content: this.accumulatedResponse,

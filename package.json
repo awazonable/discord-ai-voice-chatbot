@@ -1,11 +1,15 @@
 {
   "name": "zundamon-poc",
   "version": "1.0.0",
-  "description": "",
+  "description": "ずんだもんボット PoC — ウェイクワード判定・ラウンド管理ロジック",
   "main": "index.js",
   "scripts": {
     "scenarios": "tsx src/scenarios.ts",
-    "cli": "tsx src/cli.ts"
+    "cli": "tsx src/cli.ts",
+    "preflight": "tsx src/preflight.ts",
+    "scenarios:real": "tsx src/realScenarios.ts",
+    "test:fake": "tsx test/runAgainstFake.ts",
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [],
   "author": "",
