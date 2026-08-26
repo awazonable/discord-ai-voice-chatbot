@@ -30,7 +30,7 @@ export class MultiSpeakerStt {
    *
    * 実測で、同一SttEngineを複数の発話セッションにまたがって使い回すと
    * sherpa-onnxのネイティブ層で "circular-buffer.cc: Invalid n" という
-   * エラーが稀に発生することを確認した(docs/openai-test-handoff.md参照)。
+   * エラーが稀に発生することを確認した(docs/archive/openai-test-handoff.md参照)。
    * 発話セッションごとに作り直すことでこの問題を回避する。
    */
   resetSpeaker(speakerId: string): void {

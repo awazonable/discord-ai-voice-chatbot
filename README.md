@@ -1,7 +1,11 @@
-# ずんだもんボット PoC — ウェイクワード判定ロジック
+# ずんだもんボット
 
-音声認識(STT)・VOICEVOX・Discordはまだ繋がっていない、
-「ウェイクワード検知後のLLM呼び出しタイミング」だけを検証する最小構成。
+「ウェイクワード検知後のLLM呼び出しタイミング」の検証から始まったPoC。
+STT(sherpa-onnx)・TTS(VOICEVOX)・Discord(discord.js)・記憶(Qdrant)は
+それぞれ個別スクリプトで実際に動作することを確認済み（下記コマンド一覧）。
+ただし現時点では、それらを`ZundamonSession`本体に配線した一気通貫の
+Discordボット本体はまだ組み上がっていない（詳細・未対応事項は
+[`docs/overall-design.md`](docs/overall-design.md)参照）。
 
 ## セットアップ
 
@@ -223,11 +227,14 @@ OPENAI_API_KEY=dummy OPENAI_BASE_URL=http://127.0.0.1:8787/v1 \
   MAIN_MODEL=fake-main JUDGE_MODEL=fake-judge npm run preflight
 ```
 
-## 引き継ぎ
+## 現状・次のステップ
 
-実APIでの実測はまだ未達（テスト作成環境にAPIキーが無かったため）。
-現状・再開手順・実測後に決めたい設計判断は
-[`docs/openai-test-handoff.md`](docs/openai-test-handoff.md) に集約してある。
+プロジェクト全体の設計・現在の進捗・未対応事項は
+[`docs/overall-design.md`](docs/overall-design.md)（STTの詳細は
+[`docs/stt-design.md`](docs/stt-design.md)）に集約してある。
+実装の過程で実測して分かったこと・判断の経緯は
+[`docs/archive/openai-test-handoff.md`](docs/archive/openai-test-handoff.md)
+に時系列で残っている（完了済みの作業ログ）。
 
 ## LLM呼び出しログ
 
@@ -241,29 +248,8 @@ OPENAI_API_KEY=dummy OPENAI_BASE_URL=http://127.0.0.1:8787/v1 \
 grep '"kind":"judge"' logs/llm-calls.jsonl | tail -5
 ```
 
-## 未実装・次のステップ
+## 未対応事項
 
-- STT層（sherpa-onnx-node）との接続 — 現状はキーボード入力で代用
-- VOICEVOX層との接続: `tts/sushikiClient.ts` で音声合成そのものの疎通は
-  取れた（`npm run tts:test`）。まだ `onSentenceReady` イベントには
-  つなぎ込んでいない。つなぎ込む際は「テキスト生成が音声再生より速い」
-  という `audioClock.ts` の前提（実測ベースの0.1秒/文字）を、実際の
-  合成+再生時間の実測値に差し替えること
-- discord.js（`@discordjs/voice`）との接続 — ボイスチャンネル音声受信・
-  ストリーム再生
-- モデル名の確定（`npm run preflight` で実在確認すること）
-- 話者複数対応: 現状 `ZundamonSession` は1話者分の想定。実運用では
-  話者(speakerId)ごとにセッションを分けるか、共有会話ログの扱いを別途設計する
-- 判定コストの最適化: `judgeContinuation` は追加発話のたびにAPI呼び出しが
-  発生する。呼びかけ語のみの単純なケースはローカルヒューリスティックで
-  先に弾く等の最適化余地あり
-- 判定LLMの誤判定対策: 実測で、無関係な発話を継続と誤判定するケースを
-  確認した（詳細は [`docs/openai-test-handoff.md`](docs/openai-test-handoff.md)）。
-  プロンプト調整や誤判定率の計測が必要
-- 音声再生時間の考慮: `audioClock.ts` は文字数からの概算（0.1秒/文字）の
-  仮実装。VOICEVOX接続後は実測の合成+再生時間に差し替えること
-- **`GRACE_WINDOW_MS` が実質機能していない**: 猶予タイマーは張られるものの、
-  追加発話は PROCESSING 中ならいつでも判定にかけられており、
-  2秒の窓が何かをゲートしているわけではない。意図どおりに窓で絞るのか、
-  それとも「応答中はいつでも割り込める」を正とするのか要決定（挙動を
-  変える判断になるため本PoCでは既存挙動のまま据え置いている）。
+最新の一覧は [`docs/overall-design.md`](docs/overall-design.md) の
+「未確定・要検討事項」を参照（このREADMEとの二重管理で内容が
+ズレるのを防ぐため、詳細はそちらに一本化している）。

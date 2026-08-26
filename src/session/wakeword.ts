@@ -9,7 +9,7 @@
 // 「〜んだもん」という一般的な日本語の口語表現の語尾と衝突するため、
 // 単純な部分一致では誤検知が多発する。ここでは対応せず、根本対策
 // （VAD区間の前にpre-rollバッファを足す）を要検討事項として
-// docs/openai-test-handoff.md に記録するに留める。
+// docs/archive/openai-test-handoff.md に記録するに留める。
 const WAKE_WORDS = ["ずんだもん", "ずんだもーん", "すんだもん", "すんだもーん"];
 
 export function detectWakeWord(text: string): boolean {

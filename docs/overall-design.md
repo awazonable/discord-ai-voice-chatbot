@@ -54,7 +54,7 @@ Silero VADのローカル疎通は確認済み（`npm run stt:test` / `stt:strea
 配布されているReazonSpeechモデルはオフライン専用のため、stt-design.mdの
 「partial: 0.5秒間隔で更新」は実現できず、「VAD区間検出→区間ごと一括認識」
 に設計変更した。ウェイクワード「ずんだもん」の認識精度に既知の課題あり
-（`docs/openai-test-handoff.md`参照、対応は保留中）。
+（`docs/archive/openai-test-handoff.md`参照、対応は保留中）。
 
 ### 呼びかけ検知・ラウンド管理層（本PoCの成果）
 - **先行投機実行**: ウェイクワード検知後、猶予ウィンドウで待たず即座に本体LLMへ
@@ -110,7 +110,7 @@ LLMに渡すトークンを4種類に整理し、それぞれ扱いを変える�
   search_memoryを呼ばず「知らない」と答えてしまうことがあった。
   「答える前に必ず1回search_memoryを呼び出すこと。呼ぶ前に知らないと
   結論づけないこと」まで踏み込んで指示する必要があった
-  （`docs/openai-test-handoff.md`参照）
+  （`docs/archive/openai-test-handoff.md`参照）
 
 ### 出力層
 - VOICEVOXで音声合成 → discord.jsの`VoiceConnection`でDiscordボイスチャンネルへ
@@ -122,16 +122,19 @@ LLMに渡すトークンを4種類に整理し、それぞれ扱いを変える�
 1. STT〜呼びかけ検知〜LLM層の実配線: STT単体の疎通は確認済み
    （`src/stt/`、`npm run stt:test` / `stt:stream-test`）。
    `ZundamonSession.onFinalUtterance`への本配線はまだ。
-   ウェイクワード認識精度の課題（保留中、`docs/openai-test-handoff.md`）
+   ウェイクワード認識精度の課題（保留中、`docs/archive/openai-test-handoff.md`）
    を解決してから配線するか判断すること
 2. ~~VOICEVOX層との接続~~ → 解決済み。`onSentenceReady`を実際の合成+
    スピーカー再生(`RealPlaybackQueue`)につなぎ込み、`npm run cli`で
    テキスト入力→実音声再生まで通しで動作することを確認した
-3. discord.js音声受信・送信の実装: **送信は疎通確認済み**
-   （`npm run discord:test`。ログイン→ボイスチャンネル参加→VOICEVOX音声
-   再生→テキストチャンネルへ報告、まで通しで動作）。native buildを避け
-   opusscript(pure JS Opus) + libsodium-wrappers(pure JS/WASM暗号化)を
-   採用。**受信(`receiver.subscribe`)は未着手**
+3. discord.js音声受信・送信の実装: **送信・受信とも疎通確認済み**。
+   送信は`npm run discord:test`（ログイン→ボイスチャンネル参加→VOICEVOX
+   音声再生→テキストチャンネルへ報告）、受信は`npm run
+   discord:receive-test`（実際の発話をSTTで認識、話者ごとに
+   `MultiSpeakerStt`で分離）で確認した。native buildを避けopusscript
+   (pure JS Opus) + libsodium-wrappers(pure JS/WASM暗号化)を採用。
+   **未対応**: `ZundamonSession`本体への配線（項目1のウェイクワード課題と
+   同じ理由で保留）。既知バグは項目8参照
 4. ~~記憶DBのスキーマ・ベクトル化方式~~ → 解決済み（本ドキュメントの
    「記憶(DB)層」参照）。残課題: 長期記憶の自動保存判定の精度検証・
    短期記憶の圧縮閾値のチューニング
@@ -149,10 +152,10 @@ LLMに渡すトークンを4種類に整理し、それぞれ扱いを変える�
    前提で、各話者に個別のZundamonSessionは持たせていない。今のところ
    これは意図した設計 — 詳細はstt-design.md「Discord音声受信との接続」）
 7. newRoundのバックログ破棄における「打ち切り意図」判定の精度検証
-   （`docs/openai-test-handoff.md`参照）
+   （`docs/archive/openai-test-handoff.md`参照）
 8. Discord音声受信の既知バグ（保留中）: `circular-buffer.cc: Invalid n`
    というネイティブ層エラーが同一ユーザーの2発話目以降で発生することが
    ある（自己回復するが該当区間の認識が壊れる）。原因はおそらく
    `SttEngine`をユーザーごとに使い回す際、発話セッション間でVAD/バッファの
    内部状態がクリーンにリセットされていないこと。詳細は
-   `docs/openai-test-handoff.md`参照
+   `docs/archive/openai-test-handoff.md`参照
