@@ -30,6 +30,8 @@ export interface AppConfig {
   qdrantURL: string;
   /** 長期記憶のベクトル化に使う埋め込みモデル。 */
   embeddingModel: string;
+  /** sherpa-onnx用モデル一式を置くディレクトリ。既定は .models/ 。 */
+  modelsDir: string;
 }
 
 export class MissingSushikiApiKeyError extends Error {
@@ -67,6 +69,7 @@ export function loadConfig(): AppConfig {
     voicevoxBaseURL: process.env.VOICEVOX_BASE_URL || undefined,
     qdrantURL: process.env.QDRANT_URL || "http://127.0.0.1:6333",
     embeddingModel: process.env.EMBEDDING_MODEL || "text-embedding-3-small",
+    modelsDir: process.env.MODELS_DIR || ".models",
   };
 }
 

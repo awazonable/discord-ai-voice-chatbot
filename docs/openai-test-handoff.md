@@ -352,6 +352,58 @@ status=403, content-type="application/json"
 （`tts:test`/`tts:playback-demo`/`tts:overhead-test`）を実行する前に、
 https://su-shiki.com/api/ でポイント残量を確認すること。
 
+## STT層(sherpa-onnx-node)の疎通と既知の課題
+
+`docs/stt-design.md`に沿ってReazonSpeech Zipformer(int8) + Silero VAD(v5)を
+Windowsローカルで疎通確認した。モデルは`.models/`配下（gitignore済み、
+`sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01`約680MB +
+`silero_vad_v5.onnx`）。
+
+- `npm run stt:test` — モデル同梱のtest_wavs（正解transcript付き）5件で
+  RTF≈0.013（約75倍速）、認識結果は句読点・数字表記以外ほぼ完全一致
+- TTS(VOICEVOX)→STTの閉ループ確認: 「こんにちはなのだ」を合成→認識
+  させたところ完全一致。24kHz(VOICEVOX出力)→16kHz(モデル要求)の
+  内部リサンプルも問題なく機能
+
+### 判明した設計変更点
+
+`sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01`はディレクトリ名に
+"streaming"を含まない**オフライン**(発話全体を一括デコード)エクスポート。
+stt-design.mdが想定していた「partial: 0.5秒間隔で更新」のような
+ストリーミング部分認識はこのモデルではできない。
+**VADが発話区間を検出→区間ごとに一括認識**という構成に変更した
+（`src/stt/sttEngine.ts`）。finalの確定タイミング(無音検出と同時)は
+stt-design.mdの方針と両立するが、partial表示が要る場合は
+"streaming"を含むモデル名への差し替えが必要。
+
+### 既知の課題(保留): ウェイクワード「ずんだもん」の認識精度
+
+実際にVAD+STTのストリーミング模擬テスト(`npm run stt:stream-test`)で
+「ずんだもん、こんにちは」を認識させたところ、2つの問題を発見した。
+
+1. **デコード時の音素混同**: 発話冒頭の「ずんだもん」が「すんだもん」に
+   寄る（「ずんだ」は一般語彙が少なくASRが「ず」を「す」に寄せがち）。
+   VAD区間をそのままデコードすると先頭が丸ごと欠落することもあり、
+   区間の前後に無音パディングを足すことでこの欠落はほぼ解消した
+   （`decodeSegment`、pad>=0.1sで大幅改善、0.3s采用）。
+2. **VAD自体のオンセット検出遅れ**: Silero VADが発話の立ち上がり検出に
+   実測で約158ms遅れることを`segment.start`から確認した。この間の
+   音声は`segment.samples`に含まれず、無音パディングでは復元できない
+   （音声データそのものが無いため）。結果、「んだもん」まで削れて
+   渡ってくることがある。
+
+`wakeword.ts`の許容リストに「すんだもん」は追加したが、「んだもん」は
+「〜んだもん」という一般的な口語の語尾表現と衝突し誤検知の元になるため
+追加を見送った。根本対策は、VADが渡す`segment.start`を使って区間の
+直前の実音声をpre-rollとして付け足す実装（履歴バッファを持ち、
+`segment.start - preRollSamples`〜`segment.start`の実音声を
+`segment.samples`の前に連結する）。実装方針は確認済み(`segment.start`が
+使えることは実測確認済み)だが、優先度の都合で一旦保留。
+
+**次にSTT精度に着手するときはここから**: `src/stt/sttEngine.ts`に
+履歴バッファ(`history: Float32Array` + `historyBaseIndex`)を追加し、
+`decodeSegment`に`segmentStart`引数を渡してpre-rollを実音声で構成する。
+
 ## 記憶(短期+長期)の実装
 
 トークンを「システムプロンプト / 現在の問いかけ / 短期記憶 / 長期記憶」の

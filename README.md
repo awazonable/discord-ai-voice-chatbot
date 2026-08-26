@@ -17,6 +17,16 @@ cp .env.example .env
 `docker run -p 6333:6333 qdrant/qdrant`）。既定では`http://127.0.0.1:6333`
 に接続する。
 
+STT(`stt:*`)を使う場合はモデルを`.models/`に置く（gitignore済み、初回のみ）:
+
+```bash
+mkdir -p .models && cd .models
+gh release download asr-models -R k2-fsa/sherpa-onnx \
+  -p "sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01.tar.bz2" -O reazonspeech.tar.bz2
+tar -xjf reazonspeech.tar.bz2 && rm reazonspeech.tar.bz2
+gh release download asr-models -R k2-fsa/sherpa-onnx -p "silero_vad_v5.onnx"
+```
+
 ## 実行方法
 
 コマンドは「APIを叩かないもの」→「実APIを叩くもの」の順に並べてある。
@@ -39,6 +49,8 @@ cp .env.example .env
 | `npm run memory:test` | 必要+Qdrant | ごく少 | 長期記憶(Qdrant)の保存・意味検索の単発疎通確認 |
 | `npm run memory:toolcall-test` | 必要+Qdrant | 少 | save_memory/search_memoryをLLMのツール呼び出し経由で実行 |
 | `npm run memory:session-demo` | 必要+Qdrant | 中 | 短期記憶の自動圧縮+長期記憶の想起を実セッションで確認 |
+| `npm run stt:test` | 不要 | なし | STT(ReazonSpeech Zipformer)の疎通確認。同梱テスト音声+TTS閉ループ |
+| `npm run stt:stream-test` | 必要(TTS用) | ごく少 | VAD+STTのストリーミング疑似投入テスト |
 
 ### 1. モックLLMでロジック検証（API課金なし）
 
@@ -174,6 +186,10 @@ src/
   memoryTest.ts            長期記憶(Qdrant)単体の疎通テスト
   memoryToolCallTest.ts    save_memory/search_memoryをツール呼び出しで検証
   memorySessionDemo.ts     短期記憶の圧縮+長期記憶の想起を実セッションで確認
+  stt/
+    sttEngine.ts            VAD(Silero)による発話区間検出+オフライン認識(ReazonSpeech)
+  sttTest.ts               STT単体の疎通テスト(同梱テスト音声+TTS閉ループ)
+  sttStreamTest.ts          VAD+STTのストリーミング疑似投入テスト
   scenarios.ts          モックLLMでの自動シナリオテスト
   scenarioRunner.ts     シナリオ定義と実行（real / fake で共用）
   realScenarios.ts      実APIでのシナリオ実行エントリ

@@ -49,7 +49,12 @@ VOICEVOX合成 → discord.js VoiceConnection でDiscordへストリーム再生
     非公式手段はToS違反になるため採用しない
 
 ### STT層
-→ 別紙 `stt-design.md` 参照
+→ 別紙 `stt-design.md` 参照。sherpa-onnx-node + ReazonSpeech Zipformer +
+Silero VADのローカル疎通は確認済み（`npm run stt:test` / `stt:stream-test`）。
+配布されているReazonSpeechモデルはオフライン専用のため、stt-design.mdの
+「partial: 0.5秒間隔で更新」は実現できず、「VAD区間検出→区間ごと一括認識」
+に設計変更した。ウェイクワード「ずんだもん」の認識精度に既知の課題あり
+（`docs/openai-test-handoff.md`参照、対応は保留中）。
 
 ### 呼びかけ検知・ラウンド管理層（本PoCの成果）
 - **先行投機実行**: ウェイクワード検知後、猶予ウィンドウで待たず即座に本体LLMへ
@@ -114,7 +119,11 @@ LLMに渡すトークンを4種類に整理し、それぞれ扱いを変える�
 
 ## 未確定・要検討事項（次のステップ）
 
-1. STT〜呼びかけ検知〜LLM層の実配線（本PoCコードの接続）
+1. STT〜呼びかけ検知〜LLM層の実配線: STT単体の疎通は確認済み
+   （`src/stt/`、`npm run stt:test` / `stt:stream-test`）。
+   `ZundamonSession.onFinalUtterance`への本配線はまだ。
+   ウェイクワード認識精度の課題（保留中、`docs/openai-test-handoff.md`）
+   を解決してから配線するか判断すること
 2. VOICEVOX層との接続: 音声合成自体の疎通・実再生は確認済み
    （`src/tts/`、`npm run tts:playback-demo`）。`onSentenceReady`への
    本配線はまだ
