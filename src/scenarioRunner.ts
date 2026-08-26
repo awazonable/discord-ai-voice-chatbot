@@ -144,6 +144,12 @@ export async function runScenario(
       interrupted = true;
       console.log(`  [中断要求] ${r}`);
     },
+    onAudioTruncated: (n, chars, savedMs) => {
+      console.log(
+        `  [音声破棄] 未再生の${n}文(${chars}文字、音声換算${(savedMs / 1000).toFixed(1)}s分)を` +
+          `キューから破棄`
+      );
+    },
     onFinalResponse: (t) => {
       finalCount++;
       console.log(`  [最終応答${finalCount}] ${t}`);

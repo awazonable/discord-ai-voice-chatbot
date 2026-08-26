@@ -25,6 +25,8 @@ cp .env.example .env
 | `npm run preflight` | 必要 | ごく少 | 認証・モデル名の実在確認・レイテンシ実測 |
 | `npm run scenarios:real` | 必要 | 少 | 実APIで4シナリオを自動実行 |
 | `npm run cli` | 必要 | 少 | 実APIで対話的に検証 |
+| `npm run toolcall` | 必要 | ごく少 | ツールコール(function calling)が動くかの単発疎通確認 |
+| `npm run tts:test` | 必要(SUSHIKI_API_KEY) | 少 | 音声合成(su-shiki VOICEVOX API)の単発疎通確認。output/にwavを保存 |
 
 ### 1. モックLLMでロジック検証（API課金なし）
 
@@ -132,10 +134,18 @@ src/
     errors.ts           中断エラーの判定（SDKごとの差異を吸収）
     mockClient.ts       APIを叩かないモック実装（レイテンシ模擬つき）
     openaiClient.ts     OpenAI(互換)実装
+    callLogger.ts        LLM呼び出し（本体・判定）の入出力を logs/llm-calls.jsonl
+                          に1行JSONで記録する仮ロガー
   session/
     types.ts            Utterance, SessionState, SessionEvents の型
     wakeword.ts         ウェイクワード検知
     sentenceBuffer.ts   文単位ストリームバッファ（グレースフル中断の要）
+    audioClock.ts        テキスト生成と音声再生のズレを追跡する仮クロック
+                          （0.1秒/文字の概算。VOICEVOX未接続の間のプレースホルダー）
+  tts/
+    types.ts             TTSクライアントの抽象インターフェース
+    sushikiClient.ts      su-shiki(Web版VOICEVOX API)実装
+  ttsTest.ts              音声合成の単発疎通テスト（話者一覧取得+短文合成）
     zundamonSession.ts  セッション管理コアロジック（本体）
   scenarios.ts          モックLLMでの自動シナリオテスト
   scenarioRunner.ts     シナリオ定義と実行（real / fake で共用）
@@ -162,11 +172,26 @@ OPENAI_API_KEY=dummy OPENAI_BASE_URL=http://127.0.0.1:8787/v1 \
 現状・再開手順・実測後に決めたい設計判断は
 [`docs/openai-test-handoff.md`](docs/openai-test-handoff.md) に集約してある。
 
+## LLM呼び出しログ
+
+実API/フェイクサーバ問わず、`OpenAILLMClient` を使う実行は
+`logs/llm-calls.jsonl`（gitignore済み）に本体モデル・判定モデルそれぞれの
+入力（messages）と出力（応答テキスト・判定結果）を1呼び出し1行のJSONで
+追記する。何を送って何が返ってきたかを後から確認したいとき用。
+
+```bash
+# 直近の判定呼び出しだけ見る例
+grep '"kind":"judge"' logs/llm-calls.jsonl | tail -5
+```
+
 ## 未実装・次のステップ
 
 - STT層（sherpa-onnx-node）との接続 — 現状はキーボード入力で代用
-- VOICEVOX層との接続 — `onSentenceReady` イベントを実際の音声合成キューに
-  つなぎ込む
+- VOICEVOX層との接続: `tts/sushikiClient.ts` で音声合成そのものの疎通は
+  取れた（`npm run tts:test`）。まだ `onSentenceReady` イベントには
+  つなぎ込んでいない。つなぎ込む際は「テキスト生成が音声再生より速い」
+  という `audioClock.ts` の前提（実測ベースの0.1秒/文字）を、実際の
+  合成+再生時間の実測値に差し替えること
 - discord.js（`@discordjs/voice`）との接続 — ボイスチャンネル音声受信・
   ストリーム再生
 - モデル名の確定（`npm run preflight` で実在確認すること）
@@ -175,6 +200,11 @@ OPENAI_API_KEY=dummy OPENAI_BASE_URL=http://127.0.0.1:8787/v1 \
 - 判定コストの最適化: `judgeContinuation` は追加発話のたびにAPI呼び出しが
   発生する。呼びかけ語のみの単純なケースはローカルヒューリスティックで
   先に弾く等の最適化余地あり
+- 判定LLMの誤判定対策: 実測で、無関係な発話を継続と誤判定するケースを
+  確認した（詳細は [`docs/openai-test-handoff.md`](docs/openai-test-handoff.md)）。
+  プロンプト調整や誤判定率の計測が必要
+- 音声再生時間の考慮: `audioClock.ts` は文字数からの概算（0.1秒/文字）の
+  仮実装。VOICEVOX接続後は実測の合成+再生時間に差し替えること
 - **`GRACE_WINDOW_MS` が実質機能していない**: 猶予タイマーは張られるものの、
   追加発話は PROCESSING 中ならいつでも判定にかけられており、
   2秒の窓が何かをゲートしているわけではない。意図どおりに窓で絞るのか、

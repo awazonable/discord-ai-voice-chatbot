@@ -17,6 +17,18 @@ export interface AppConfig {
   mainModel: string;
   judgeModel: string;
   baseURL?: string;
+  /** su-shiki.com が提供するWeb版VOICEVOX APIのキー。音声合成の検証時のみ必要。 */
+  sushikiApiKey?: string;
+}
+
+export class MissingSushikiApiKeyError extends Error {
+  constructor() {
+    super(
+      "環境変数 SUSHIKI_API_KEY が設定されていません。\n" +
+        "  https://su-shiki.com/api/ でキーを取得し .env に設定してください。"
+    );
+    this.name = "MissingSushikiApiKeyError";
+  }
 }
 
 export class MissingApiKeyError extends Error {
@@ -40,6 +52,7 @@ export function loadConfig(): AppConfig {
     mainModel: process.env.MAIN_MODEL ?? DEFAULT_MAIN_MODEL,
     judgeModel: process.env.JUDGE_MODEL ?? DEFAULT_JUDGE_MODEL,
     baseURL: process.env.OPENAI_BASE_URL || undefined,
+    sushikiApiKey: process.env.SUSHIKI_API_KEY || undefined,
   };
 }
 

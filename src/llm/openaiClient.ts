@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { ChatMessage, LLMClient, StreamToken } from "./types.js";
+import { logLLMCall } from "./callLogger.js";
 
 export interface OpenAIClientOptions {
   apiKey: string;
@@ -33,6 +34,10 @@ export class OpenAILLMClient implements LLMClient {
     messages: ChatMessage[],
     signal: AbortSignal
   ): AsyncGenerator<StreamToken> {
+    const startedAt = Date.now();
+    let accumulated = "";
+    let errorMsg: string | undefined;
+
     const stream = await this.client.chat.completions.create(
       {
         model: this.mainModel,
@@ -45,19 +50,35 @@ export class OpenAILLMClient implements LLMClient {
     // グレースフル中断では for await を break で抜ける。その際 finally で
     // HTTPストリームを明示的に閉じないと、破棄したはずの残りトークンを
     // 受信し続けて課金・帯域が無駄になる。
+    // なお、消費側が break すると非同期ジェネレータの finally も実行される
+    // （暗黙に .return() が呼ばれる仕様）ため、グレースフル中断で打ち切った
+    // 場合も「そこまでに生成されたテキスト」がログに残る。
     try {
       for await (const chunk of stream) {
         const delta = chunk.choices[0]?.delta?.content ?? "";
         const finishReason = chunk.choices[0]?.finish_reason;
         if (delta) {
+          accumulated += delta;
           yield { text: delta, done: false };
         }
         if (finishReason) {
           yield { text: "", done: true };
         }
       }
+    } catch (err) {
+      errorMsg = err instanceof Error ? err.message : String(err);
+      throw err;
     } finally {
       stream.controller.abort();
+      logLLMCall({
+        timestamp: new Date(startedAt).toISOString(),
+        kind: "main",
+        model: this.mainModel,
+        messages,
+        responseText: accumulated,
+        latencyMs: Date.now() - startedAt,
+        error: errorMsg,
+      });
     }
   }
 
@@ -66,27 +87,57 @@ export class OpenAILLMClient implements LLMClient {
     newUtterance: string,
     signal: AbortSignal
   ): Promise<{ isContinuation: boolean; reasoning: string }> {
-    const res = await this.client.chat.completions.create(
+    const startedAt = Date.now();
+    const messages: ChatMessage[] = [
       {
-        model: this.judgeModel,
-        messages: [
-          {
-            role: "system",
-            content:
-              "あなたは音声アシスタントの発話判定器です。直前のやりとりの文脈を踏まえ、" +
-              "新しく検出された発話が「アシスタントへの呼びかけの続き」か「無関係な発話（人間同士の会話など）」かを判定してください。" +
-              'JSON形式で {"is_continuation": boolean, "reasoning": string} のみを返してください。',
-          },
-          ...priorContext,
-          { role: "user", content: `新しい発話: ${newUtterance}` },
-        ],
-        response_format: { type: "json_object" },
+        role: "system",
+        content:
+          "あなたは音声アシスタントの発話判定器です。" +
+          "ユーザーは現在3人で会話しています。あなた（ずんだもん）はその場にいる話者の一人に過ぎず、" +
+          "検出される発話のすべてがあなた宛とは限りません。他の参加者への質問や、参加者同士の雑談も混ざります。" +
+          "直前のやりとりの文脈を踏まえ、新しく検出された発話が「あなたへの呼びかけの続き」か" +
+          "「あなた宛ではない発話（他の参加者への質問・参加者同士の会話など）」かを判定してください。" +
+          "疑問形かどうかだけで判定しないこと。疑問文であっても、話題が直前のやりとりと無関係、" +
+          "または他の参加者に向けられていると読めるなら、あなた宛ではないと判定してください。" +
+          'JSON形式で {"is_continuation": boolean, "reasoning": string} のみを返してください。',
       },
-      { signal, timeout: this.judgeTimeoutMs }
-    );
+      ...priorContext,
+      { role: "user", content: `新しい発話: ${newUtterance}` },
+    ];
 
-    const content = res.choices[0]?.message?.content ?? "{}";
-    return parseJudgeResponse(content);
+    try {
+      const res = await this.client.chat.completions.create(
+        {
+          model: this.judgeModel,
+          messages,
+          response_format: { type: "json_object" },
+        },
+        { signal, timeout: this.judgeTimeoutMs }
+      );
+
+      const content = res.choices[0]?.message?.content ?? "{}";
+      const parsed = parseJudgeResponse(content);
+      logLLMCall({
+        timestamp: new Date(startedAt).toISOString(),
+        kind: "judge",
+        model: this.judgeModel,
+        messages,
+        responseText: content,
+        parsed,
+        latencyMs: Date.now() - startedAt,
+      });
+      return parsed;
+    } catch (err) {
+      logLLMCall({
+        timestamp: new Date(startedAt).toISOString(),
+        kind: "judge",
+        model: this.judgeModel,
+        messages,
+        latencyMs: Date.now() - startedAt,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
   }
 }
 

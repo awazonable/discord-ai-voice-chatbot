@@ -13,6 +13,12 @@ export interface SessionEvents {
   onSpeechInterrupted: (reason: string) => void;
   onFinalResponse: (fullText: string) => void;
   onStateChange: (state: SessionState) => void;
+  /**
+   * グレースフル中断時、まだ再生が始まっていなかった（＝テキストは生成済み
+   * だが耳にはまだ届いていなかった）文を音声キューから破棄したタイミング。
+   * テキスト生成時間と実際の再生時間のズレを可視化するための計測用。
+   */
+  onAudioTruncated?: (discardedSentences: number, discardedChars: number, savedMs: number) => void;
   /** 追加発話の関連性判定が返ったタイミング（テスト・可観測性用） */
   onJudge?: (isContinuation: boolean, reasoning: string, utterance: string) => void;
   /**

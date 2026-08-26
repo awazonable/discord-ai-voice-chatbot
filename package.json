@@ -8,6 +8,8 @@
     "cli": "tsx src/cli.ts",
     "preflight": "tsx src/preflight.ts",
     "scenarios:real": "tsx src/realScenarios.ts",
+    "toolcall": "tsx src/toolCallTest.ts",
+    "tts:test": "tsx src/ttsTest.ts",
     "test:fake": "tsx test/runAgainstFake.ts",
     "typecheck": "tsc --noEmit"
   },
@@ -23,5 +25,8 @@
   "dependencies": {
     "dotenv": "^17.4.2",
     "openai": "^7.5.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
   }
 }

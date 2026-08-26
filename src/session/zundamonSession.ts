@@ -3,6 +3,7 @@ import { isAbortError } from "../llm/errors.js";
 import type { SessionEvents, SessionState, Utterance } from "./types.js";
 import { detectWakeWord } from "./wakeword.js";
 import { SentenceStreamBuffer } from "./sentenceBuffer.js";
+import { AudioClock } from "./audioClock.js";
 
 const GRACE_WINDOW_MS = 2000;
 const PRIMARY_RESPONSES = ["はい", "ん？", "どうしたの？"];
@@ -27,6 +28,13 @@ export class ZundamonSession {
   private abortController: AbortController | null = null;
   private graceTimer: NodeJS.Timeout | null = null;
   private sentenceBuffer = new SentenceStreamBuffer();
+  /**
+   * テキスト生成の速さと音声再生の速さのズレを追跡する仮クロック
+   * （VOICEVOX未接続のため文字数から概算）。セッション全体で1つ持ち続け、
+   * ラウンドをまたいでも「前の音声が再生し終わってから次が始まる」を
+   * 自然に表現する。
+   */
+  private audioClock = new AudioClock();
   private accumulatedResponse = "";
   private pendingFollowup: string | null = null;
 
@@ -180,6 +188,7 @@ export class ZundamonSession {
 
         const completedSentences = this.sentenceBuffer.push(token.text);
         for (const sentence of completedSentences) {
+          this.audioClock.enqueue(sentence);
           this.events.onSentenceReady(sentence);
 
           if (this.sentenceBuffer.isInterruptRequested()) {
@@ -193,6 +202,7 @@ export class ZundamonSession {
       if (!interruptedGracefully) {
         const remaining = this.sentenceBuffer.flush();
         for (const sentence of remaining) {
+          this.audioClock.enqueue(sentence);
           this.events.onSentenceReady(sentence);
         }
       }
@@ -208,6 +218,17 @@ export class ZundamonSession {
     if (interruptedGracefully) {
       this.abortController.abort();
       this.abortController = null;
+
+      // テキスト生成は音声再生よりずっと速いため、中断要求が届いた時点で
+      // 既に何文も先まで音声キューに積まれてしまっている。再生がまだ
+      // 始まっていない分はここで一緒に破棄する（生成を止めるだけでは
+      // キューに積まれた分がそのまま流れ切ってしまうため）。
+      const { discarded, discardedChars, savedMs } =
+        this.audioClock.truncateToCurrent();
+      if (discarded > 0) {
+        this.events.onAudioTruncated?.(discarded, discardedChars, savedMs);
+      }
+
       const followup = this.pendingFollowup;
       if (followup) {
         this.startRound();
