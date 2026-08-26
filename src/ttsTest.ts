@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { loadConfig, MissingSushikiApiKeyError } from "./config.js";
-import { SushikiTTSClient } from "./tts/sushikiClient.js";
+import { SushikiTTSClient, findZundamonSpeakerId } from "./tts/sushikiClient.js";
 
 /**
  * 音声合成(su-shiki VOICEVOX API)の単発疎通テスト。
@@ -37,17 +37,10 @@ async function main() {
     const speakers = await client.listSpeakers();
     console.log(`  ✓ ${speakers.length}件の話者を取得`);
 
-    const zundamon = speakers.find((s) => s.name.includes("ずんだもん"));
-    if (zundamon) {
-      const normal =
-        zundamon.styles.find((s) => s.name.includes("ノーマル")) ??
-        zundamon.styles[0];
-      if (normal) {
-        speakerId = normal.id;
-        console.log(
-          `  ✓ ずんだもんを発見: スタイル"${normal.name}" (id=${normal.id}) を使用`
-        );
-      }
+    const found = findZundamonSpeakerId(speakers);
+    if (found !== null) {
+      speakerId = found;
+      console.log(`  ✓ ずんだもんを発見: speaker=${found} を使用`);
     } else {
       console.log(
         `  ⚠ 話者一覧に「ずんだもん」が見つからなかったため、既定値 speaker=${speakerId} を使用`

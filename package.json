@@ -10,7 +10,9 @@
     "scenarios:real": "tsx src/realScenarios.ts",
     "toolcall": "tsx src/toolCallTest.ts",
     "tts:test": "tsx src/ttsTest.ts",
+    "tts:playback-demo": "tsx src/ttsPlaybackDemo.ts",
     "test:fake": "tsx test/runAgainstFake.ts",
+    "test:tts-fake": "tsx test/runTTSErrorTests.ts",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [],

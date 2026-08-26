@@ -27,6 +27,8 @@ cp .env.example .env
 | `npm run cli` | 必要 | 少 | 実APIで対話的に検証 |
 | `npm run toolcall` | 必要 | ごく少 | ツールコール(function calling)が動くかの単発疎通確認 |
 | `npm run tts:test` | 必要(SUSHIKI_API_KEY) | 少 | 音声合成(su-shiki VOICEVOX API)の単発疎通確認。output/にwavを保存 |
+| `npm run tts:playback-demo` | 必要(両方) | 中 | onSentenceReadyを実際の合成+スピーカー再生につなぎ込んで実測 |
+| `npm run test:tts-fake` | 不要 | なし | TTSクライアントの異常系(HTTP500・不正JSON等)をフェイクサーバで検証 |
 
 ### 1. モックLLMでロジック検証（API課金なし）
 
@@ -142,20 +144,25 @@ src/
     sentenceBuffer.ts   文単位ストリームバッファ（グレースフル中断の要）
     audioClock.ts        テキスト生成と音声再生のズレを追跡する仮クロック
                           （0.1秒/文字の概算。VOICEVOX未接続の間のプレースホルダー）
+    zundamonSession.ts  セッション管理コアロジック（本体）
   tts/
     types.ts             TTSクライアントの抽象インターフェース
     sushikiClient.ts      su-shiki(Web版VOICEVOX API)実装
-  ttsTest.ts              音声合成の単発疎通テスト（話者一覧取得+短文合成）
-    zundamonSession.ts  セッション管理コアロジック（本体）
+    playback.ts           WAVをホストスピーカーで再生(Windows専用、疎通確認用)
+    playbackQueue.ts       onSentenceReadyから渡された文を順番に合成→再生する実キュー
   scenarios.ts          モックLLMでの自動シナリオテスト
   scenarioRunner.ts     シナリオ定義と実行（real / fake で共用）
   realScenarios.ts      実APIでのシナリオ実行エントリ
   preflight.ts          実API疎通・モデル名検証・レイテンシ実測
   cli.ts                実APIでの対話的CLI検証
+  ttsTest.ts              音声合成の単発疎通テスト（話者一覧取得+短文合成）
+  ttsPlaybackDemo.ts       onSentenceReadyを実際の再生につなぎ込むデモ
 test/
   fakeOpenAIServer.ts   OpenAI互換の最小フェイクサーバ（SSE・中断検知つき）
   runAgainstFake.ts     フェイクサーバに対する統合テスト
   serveFake.ts          フェイクサーバの単体起動（preflightの動作確認用）
+  fakeTTSServer.ts        su-shiki互換の最小フェイクサーバ（異常系検証用）
+  runTTSErrorTests.ts     SushikiTTSClientの異常系テスト
 ```
 
 ### APIキー無しで preflight / scenarios:real を試す

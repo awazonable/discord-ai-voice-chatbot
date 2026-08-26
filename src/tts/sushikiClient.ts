@@ -6,8 +6,7 @@ import type {
   TTSClient,
 } from "./types.js";
 
-const AUDIO_URL = "https://deprecatedapis.tts.quest/v2/voicevox/audio/";
-const SPEAKERS_URL = "https://deprecatedapis.tts.quest/v2/voicevox/speakers/";
+const DEFAULT_BASE_URL = "https://deprecatedapis.tts.quest";
 
 export class TTSError extends Error {
   constructor(message: string) {
@@ -20,6 +19,8 @@ export interface SushikiClientOptions {
   apiKey: string;
   /** 話者IDを明示しなかったときに使う既定値。 */
   defaultSpeaker?: number;
+  /** テスト用にフェイクサーバへ向けるためのベースURL上書き。既定は本番。 */
+  baseURL?: string;
 }
 
 /**
@@ -35,7 +36,14 @@ export interface SushikiClientOptions {
  * 決め打ちせずContent-Typeヘッダから実測して返す。
  */
 export class SushikiTTSClient implements TTSClient {
-  constructor(private opts: SushikiClientOptions) {}
+  private audioURL: string;
+  private speakersURL: string;
+
+  constructor(private opts: SushikiClientOptions) {
+    const base = opts.baseURL ?? DEFAULT_BASE_URL;
+    this.audioURL = `${base}/v2/voicevox/audio/`;
+    this.speakersURL = `${base}/v2/voicevox/speakers/`;
+  }
 
   async synthesize(
     text: string,
@@ -61,7 +69,7 @@ export class SushikiTTSClient implements TTSClient {
     // ドキュメントで「POSTでの送信が好ましい」とされているため、
     // クエリ文字列ではなくPOSTボディで送る（keyがアクセスログ等に
     // 残りにくくなる意味もある）。
-    const res = await fetch(AUDIO_URL, {
+    const res = await fetch(this.audioURL, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: params.toString(),
@@ -86,7 +94,7 @@ export class SushikiTTSClient implements TTSClient {
   }
 
   async listSpeakers(): Promise<Speaker[]> {
-    const url = new URL(SPEAKERS_URL);
+    const url = new URL(this.speakersURL);
     url.searchParams.set("key", this.opts.apiKey);
 
     const res = await fetch(url);
@@ -109,6 +117,15 @@ export class SushikiTTSClient implements TTSClient {
 
     return parseSpeakers(raw);
   }
+}
+
+/** 話者一覧から「ずんだもん」のスタイルIDを探す。見つからなければnull。 */
+export function findZundamonSpeakerId(speakers: Speaker[]): number | null {
+  const zundamon = speakers.find((s) => s.name.includes("ずんだもん"));
+  if (!zundamon) return null;
+  const style =
+    zundamon.styles.find((s) => s.name.includes("ノーマル")) ?? zundamon.styles[0];
+  return style?.id ?? null;
 }
 
 /**
