@@ -8,15 +8,38 @@ export interface StreamToken {
   done: boolean;
 }
 
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  /** JSON Schema (type: "object", properties, required 等)。 */
+  parameters: Record<string, unknown>;
+}
+
+/** ツール呼び出しを実行し、結果を文字列で返す。例外を投げると呼び出し元でエラー扱いになる。 */
+export type ToolCallHandler = (name: string, argsJson: string) => Promise<string>;
+
+export interface ToolConfig {
+  definitions: ToolDefinition[];
+  onCall: ToolCallHandler;
+}
+
 /**
  * LLM呼び出しの抽象インターフェース。
  * ストリーミングでトークンを返し、AbortSignalで中断できる。
  * 実装は OpenAI 版とモック版を差し替え可能にする。
  */
 export interface LLMClient {
+  /**
+   * tools を渡すと、モデルがツール呼び出しを選んだ場合は
+   * ToolConfig.onCall で実行し、結果を会話に積んでから続きを
+   * ストリーミングする（複数回のツール呼び出しにも対応）。
+   * 呼び出し元にはツール呼び出し自体は見せず、最終的なテキスト
+   * トークンだけを流す。
+   */
   streamChat(
     messages: ChatMessage[],
-    signal: AbortSignal
+    signal: AbortSignal,
+    tools?: ToolConfig
   ): AsyncGenerator<StreamToken>;
 
   /**
@@ -39,4 +62,14 @@ export interface LLMClient {
     abandonsCurrent: boolean;
     reasoning: string;
   }>;
+
+  /**
+   * 会話ログの古い部分を短期記憶（要約+重要な事実）に圧縮する軽量呼び出し。
+   * judgeContinuationと同じく安価・低レイテンシなモデルを想定。
+   */
+  summarize(
+    messages: ChatMessage[],
+    priorSummary: string,
+    signal: AbortSignal
+  ): Promise<{ summary: string; facts: string[] }>;
 }

@@ -77,10 +77,35 @@ VOICEVOX合成 → discord.js VoiceConnection でDiscordへストリーム再生
   - `read_discord_chat` / `search_discord_history` — Discordチャット閲覧・履歴検索
 
 ### 記憶(DB)層
-- 全ログ保存ではなく、**AIが必要と判断したものだけ保存**
-- 返答後に「これ覚えておく？」を自己判定するハーネスを挟む
-- 過去記憶をさかのぼる検索フェーズ（RAG的な事前検索）も別途必要
-- 未確定: DBスキーマ・ベクトル化方式
+LLMに渡すトークンを4種類に整理し、それぞれ扱いを変える。
+
+```
+システムプロンプト  ─┐
+短期記憶（要約+事実）─┼─ 毎回そのままinputに含める
+現在の問いかけ       ─┘
+長期記憶（ベクトルDB）─── inputには含めず、search_memoryツール呼び出しでLLMが自分で取りに行く
+```
+
+- **短期記憶**: 直近の会話ログの要約 + そこから抽出した重要な事実。
+  会話ログが一定件数（既定10件）を超えたら、古い部分だけを軽量モデルで
+  要約に圧縮し、生ログは直近分（既定6件）だけ残す。バックグラウンドで
+  非同期実行し、応答のIDLE復帰は待たせない
+  （実装: `src/session/zundamonSession.ts` の `compactMemory`、
+  `src/memory/shortTermMemory.ts`）
+- **長期記憶**: ローカルQdrant（ベクトルDB、`text-embedding-3-small`で
+  埋め込み）に `save_memory` / `search_memory` ツール経由で保存・検索する。
+  全ログ保存ではなく、AIが「今後も参照する価値がある」と判断したものだけを
+  save_memoryで保存する自己判定方式（システムプロンプトで指示）。
+  「階層化」はカテゴリ(preference/fact/event/other)・重要度(1〜5)を
+  Qdrantのpayloadに持たせ、フィルタ付き検索で表現する
+  （実装: `src/memory/longTermMemory.ts`、`src/memory/embeddings.ts`、
+  `src/memory/memoryTools.ts`）
+- 実測で判明した罠: `reasoning_effort`を無効化した軽量モデル
+  (gpt-5.6-luna)は、単に「必要なら検索して」という指示だけでは
+  search_memoryを呼ばず「知らない」と答えてしまうことがあった。
+  「答える前に必ず1回search_memoryを呼び出すこと。呼ぶ前に知らないと
+  結論づけないこと」まで踏み込んで指示する必要があった
+  （`docs/openai-test-handoff.md`参照）
 
 ### 出力層
 - VOICEVOXで音声合成 → discord.jsの`VoiceConnection`でDiscordボイスチャンネルへ
@@ -90,8 +115,14 @@ VOICEVOX合成 → discord.js VoiceConnection でDiscordへストリーム再生
 ## 未確定・要検討事項（次のステップ）
 
 1. STT〜呼びかけ検知〜LLM層の実配線（本PoCコードの接続）
-2. VOICEVOX層との接続（`onSentenceReady`イベントの先）
+2. VOICEVOX層との接続: 音声合成自体の疎通・実再生は確認済み
+   （`src/tts/`、`npm run tts:playback-demo`）。`onSentenceReady`への
+   本配線はまだ
 3. discord.js音声受信・送信の実装
-4. 記憶DBのスキーマ・ベクトル化方式
+4. ~~記憶DBのスキーマ・ベクトル化方式~~ → 解決済み（本ドキュメントの
+   「記憶(DB)層」参照）。残課題: 長期記憶の自動保存判定の精度検証・
+   短期記憶の圧縮閾値のチューニング
 5. 判定コスト最適化（呼びかけ語のみのケースをローカルヒューリスティックで先に弾く等）
 6. 話者複数対応（現状のPoCは1話者分の設計）
+7. newRoundのバックログ破棄における「打ち切り意図」判定の精度検証
+   （`docs/openai-test-handoff.md`参照）

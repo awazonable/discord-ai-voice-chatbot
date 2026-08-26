@@ -19,6 +19,8 @@ export interface SessionEvents {
    * テキスト生成時間と実際の再生時間のズレを可視化するための計測用。
    */
   onAudioTruncated?: (discardedSentences: number, discardedChars: number, savedMs: number) => void;
+  /** 会話ログの古い部分が短期記憶(要約+重要な事実)に圧縮されたタイミング。テスト・可観測性用。 */
+  onMemoryCompacted?: (summary: string, facts: string[]) => void;
   /** 追加発話の関連性判定が返ったタイミング（テスト・可観測性用） */
   onJudge?: (isContinuation: boolean, reasoning: string, utterance: string) => void;
   /**

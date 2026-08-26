@@ -26,6 +26,10 @@ export interface AppConfig {
    *   例: VOICEVOX_BASE_URL=http://127.0.0.1:50021
    */
   voicevoxBaseURL?: string;
+  /** ローカルQdrantのURL。長期記憶(ベクトルDB)に使う。既定はローカル標準ポート。 */
+  qdrantURL: string;
+  /** 長期記憶のベクトル化に使う埋め込みモデル。 */
+  embeddingModel: string;
 }
 
 export class MissingSushikiApiKeyError extends Error {
@@ -61,6 +65,8 @@ export function loadConfig(): AppConfig {
     baseURL: process.env.OPENAI_BASE_URL || undefined,
     sushikiApiKey: process.env.SUSHIKI_API_KEY || undefined,
     voicevoxBaseURL: process.env.VOICEVOX_BASE_URL || undefined,
+    qdrantURL: process.env.QDRANT_URL || "http://127.0.0.1:6333",
+    embeddingModel: process.env.EMBEDDING_MODEL || "text-embedding-3-small",
   };
 }
 

@@ -22,6 +22,7 @@ export class MockLLMClient implements LLMClient {
   async *streamChat(
     messages: ChatMessage[],
     signal: AbortSignal
+    // tools は現状ロジック検証用のモックでは未対応（実装はopenaiClient.tsのみ）
   ): AsyncGenerator<StreamToken> {
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     const query = lastUser?.content ?? "";
@@ -63,6 +64,18 @@ export class MockLLMClient implements LLMClient {
       reasoning: isContinuation
         ? "疑問・依頼の形を含むため継続と判定"
         : "呼びかけへの応答ではなく別の発話と判定",
+    };
+  }
+
+  async summarize(
+    messages: ChatMessage[],
+    priorSummary: string,
+    signal: AbortSignal
+  ): Promise<{ summary: string; facts: string[] }> {
+    await sleep(50, signal);
+    return {
+      summary: `${priorSummary ? priorSummary + " / " : ""}${messages.length}件のやりとり(mock要約)`,
+      facts: [],
     };
   }
 }

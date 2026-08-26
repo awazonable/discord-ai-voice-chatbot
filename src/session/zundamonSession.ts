@@ -1,12 +1,17 @@
-import type { LLMClient, ChatMessage } from "../llm/types.js";
+import type { LLMClient, ChatMessage, ToolConfig } from "../llm/types.js";
 import { isAbortError } from "../llm/errors.js";
 import type { SessionEvents, SessionState, Utterance } from "./types.js";
 import { detectWakeWord } from "./wakeword.js";
 import { SentenceStreamBuffer } from "./sentenceBuffer.js";
 import { AudioClock } from "./audioClock.js";
+import { ShortTermMemory } from "../memory/shortTermMemory.js";
 
 const GRACE_WINDOW_MS = 2000;
 const PRIMARY_RESPONSES = ["はい", "ん？", "どうしたの？"];
+/** 会話ログがこの件数を超えたら、古い分を短期記憶(要約)に圧縮する */
+const COMPACT_THRESHOLD_MESSAGES = 10;
+/** 圧縮後も生ログのまま残す直近のメッセージ数 */
+const KEEP_RECENT_MESSAGES = 6;
 
 /**
  * 1話者分のずんだもんセッション。
@@ -37,8 +42,16 @@ export class ZundamonSession {
   private audioClock = new AudioClock();
   private accumulatedResponse = "";
   private pendingFollowup: string | null = null;
+  /** 短期記憶: 直近の会話の要約+重要な事実。毎回inputに差し込む。 */
+  private shortTermMemory = new ShortTermMemory();
+  private compacting = false;
 
-  constructor(private llm: LLMClient, private events: SessionEvents) {}
+  constructor(
+    private llm: LLMClient,
+    private events: SessionEvents,
+    /** 長期記憶(save_memory/search_memory)等、LLMに渡すツール定義。省略可。 */
+    private tools?: ToolConfig
+  ) {}
 
   private setState(s: SessionState) {
     this.state = s;
@@ -190,15 +203,30 @@ export class ZundamonSession {
       role: "system",
       content:
         "あなたはずんだもんです。まだユーザーの発話が続いている可能性があるため、断定的な長い応答は避け、" +
-        "短く簡潔に応答してください。語尾は「〜のだ」「〜なのだ」を使ってください。",
+        "短く簡潔に応答してください。語尾は「〜のだ」「〜なのだ」を使ってください。" +
+        (this.tools
+          ? " ユーザーの過去の発言・好み・予定について聞かれたときは、自分の記憶を" +
+            "信用せず、答える前に必ず search_memory を1回呼び出してから答えてください。" +
+            "呼び出す前に「知らない」と結論づけないこと。ユーザーについて覚えておくべき" +
+            "情報が出てきたら save_memory で保存してください。"
+          : ""),
     };
+
+    // トークン構成: システムプロンプト / 短期記憶(要約+重要な事実) /
+    // 直近の会話ログ(末尾が現在の問いかけ)。長期記憶はここには含めず、
+    // 必要ならLLMがsearch_memoryツールを呼んで自分で取りに行く。
+    const shortTermBlock = this.shortTermMemory.render();
+    const contextMessages: ChatMessage[] = shortTermBlock
+      ? [{ role: "system", content: shortTermBlock }]
+      : [];
 
     let interruptedGracefully = false;
 
     try {
       for await (const token of this.llm.streamChat(
-        [systemPrompt, ...messages],
-        signal
+        [systemPrompt, ...contextMessages, ...messages],
+        signal,
+        this.tools
       )) {
         this.accumulatedResponse += token.text;
 
@@ -261,5 +289,47 @@ export class ZundamonSession {
     });
     this.events.onFinalResponse(this.accumulatedResponse);
     this.setState("IDLE");
+
+    if (this.conversationLog.length > COMPACT_THRESHOLD_MESSAGES) {
+      void this.compactMemory();
+    }
+  }
+
+  /**
+   * 会話ログの古い部分を短期記憶(要約+重要な事実)に圧縮する。
+   * バックグラウンドで実行し、応答のIDLE復帰は待たせない。
+   * 実行中に新しいラウンドが会話ログへ追記されても、要約対象は
+   * 呼び出し時点でスライスした「先頭側の一部」に固定してあるため、
+   * 末尾への追記とは競合しない（同時に2つ走らないようcompactingで防ぐ）。
+   */
+  private async compactMemory() {
+    if (this.compacting) return;
+    this.compacting = true;
+    try {
+      const cutoff = this.conversationLog.length - KEEP_RECENT_MESSAGES;
+      const toSummarize = this.conversationLog.slice(0, cutoff);
+      if (toSummarize.length === 0) return;
+
+      const ctrl = new AbortController();
+      const { summary, facts } = await this.llm.summarize(
+        toSummarize,
+        this.shortTermMemory.getSummary(),
+        ctrl.signal
+      );
+      this.shortTermMemory.setSummary(summary);
+      for (const f of facts) this.shortTermMemory.addFact(f);
+
+      // 先頭側 toSummarize.length 件を取り除く。末尾への追記はここまでの
+      // 間に起きていても影響しない（前方だけを削るため）。
+      this.conversationLog = this.conversationLog.slice(toSummarize.length);
+
+      this.events.onMemoryCompacted?.(summary, facts);
+    } catch (err) {
+      // 圧縮に失敗しても会話ログはそのまま残るので、次ラウンド以降も
+      // 生ログとして機能し続ける（劣化はするが会話は継続できる）。
+      this.reportError(err, "compactMemory");
+    } finally {
+      this.compacting = false;
+    }
   }
 }

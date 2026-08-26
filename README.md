@@ -11,6 +11,12 @@ cp .env.example .env
 # .env に OPENAI_API_KEY を設定
 ```
 
+長期記憶(`memory:*`)を使う場合はローカルQdrantも起動しておくこと
+（Windowsの場合、[GitHub Releases](https://github.com/qdrant/qdrant/releases)
+の`qdrant-x86_64-pc-windows-msvc.zip`を展開して`qdrant.exe`を実行するか、
+`docker run -p 6333:6333 qdrant/qdrant`）。既定では`http://127.0.0.1:6333`
+に接続する。
+
 ## 実行方法
 
 コマンドは「APIを叩かないもの」→「実APIを叩くもの」の順に並べてある。
@@ -30,6 +36,9 @@ cp .env.example .env
 | `npm run tts:playback-demo` | 必要(両方) | 中 | onSentenceReadyを実際の合成+スピーカー再生につなぎ込んで実測 |
 | `npm run test:tts-fake` | 不要 | なし | TTSクライアントの異常系(HTTP500・不正JSON等)をフェイクサーバで検証 |
 | `npm run tts:overhead-test` | 必要(SUSHIKI_API_KEY) | 少(合成1回のみ) | 再生方式ごとのオーバーヘッドをWAV実長と比較 |
+| `npm run memory:test` | 必要+Qdrant | ごく少 | 長期記憶(Qdrant)の保存・意味検索の単発疎通確認 |
+| `npm run memory:toolcall-test` | 必要+Qdrant | 少 | save_memory/search_memoryをLLMのツール呼び出し経由で実行 |
+| `npm run memory:session-demo` | 必要+Qdrant | 中 | 短期記憶の自動圧縮+長期記憶の想起を実セッションで確認 |
 
 ### 1. モックLLMでロジック検証（API課金なし）
 
@@ -157,6 +166,14 @@ src/
                           playWavFile(毎回新規起動、単発確認用)の2実装
     playbackQueue.ts       onSentenceReadyから渡された文を順番に合成→再生する実キュー
     wav.ts                 WAVヘッダから実際の音声長(ms)を読み取る
+  memory/
+    embeddings.ts         OpenAI埋め込みAPIのラッパー
+    longTermMemory.ts      Qdrant(ベクトルDB)への保存・検索
+    memoryTools.ts          save_memory/search_memoryのツール定義
+    shortTermMemory.ts      短期記憶(要約+重要な事実)のデータ保持・描画
+  memoryTest.ts            長期記憶(Qdrant)単体の疎通テスト
+  memoryToolCallTest.ts    save_memory/search_memoryをツール呼び出しで検証
+  memorySessionDemo.ts     短期記憶の圧縮+長期記憶の想起を実セッションで確認
   scenarios.ts          モックLLMでの自動シナリオテスト
   scenarioRunner.ts     シナリオ定義と実行（real / fake で共用）
   realScenarios.ts      実APIでのシナリオ実行エントリ

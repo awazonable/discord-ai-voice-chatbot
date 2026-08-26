@@ -12,6 +12,9 @@
     "tts:test": "tsx src/ttsTest.ts",
     "tts:playback-demo": "tsx src/ttsPlaybackDemo.ts",
     "tts:overhead-test": "tsx src/ttsOverheadTest.ts",
+    "memory:test": "tsx src/memoryTest.ts",
+    "memory:toolcall-test": "tsx src/memoryToolCallTest.ts",
+    "memory:session-demo": "tsx src/memorySessionDemo.ts",
     "test:fake": "tsx test/runAgainstFake.ts",
     "test:tts-fake": "tsx test/runTTSErrorTests.ts",
     "typecheck": "tsc --noEmit"
@@ -26,6 +29,7 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
+    "@qdrant/js-client-rest": "^1.19.0",
     "dotenv": "^17.4.2",
     "openai": "^7.5.0"
   },

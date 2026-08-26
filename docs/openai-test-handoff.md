@@ -352,6 +352,53 @@ status=403, content-type="application/json"
 （`tts:test`/`tts:playback-demo`/`tts:overhead-test`）を実行する前に、
 https://su-shiki.com/api/ でポイント残量を確認すること。
 
+## 記憶(短期+長期)の実装
+
+トークンを「システムプロンプト / 現在の問いかけ / 短期記憶 / 長期記憶」の
+4種類に整理して実装した。設計判断とアーキテクチャの詳細は
+`docs/overall-design.md`の「記憶(DB)層」を参照。ここでは実測で分かった
+ことのみ記録する。
+
+### ローカルQdrant
+
+Windowsネイティブバイナリ(`qdrant.exe`)を`.qdrant/`にダウンロードして
+起動（gitignore済み。Docker Desktopのデーモンが起動していなかったため
+バイナリ版を採用）。埋め込みは`text-embedding-3-small`。
+[`src/memoryTest.ts`](../src/memoryTest.ts)（`npm run memory:test`）で
+保存4件・意味検索・カテゴリ絞り込みが実測どおり動作することを確認した
+（「好きな食べ物は？」で最もスコアが高いのは正しく食べ物の記憶、など）。
+
+### ツール呼び出しループの実装
+
+`OpenAILLMClient.streamChat`にツール呼び出しの往復ループを実装
+（最大6往復、ツール実行結果を会話に積んで再度ストリーミング）。
+`npm run toolcall`で確認済みの`reasoning_effort: "none"`の罠
+（gpt-5.6系はreasoningが有効なままだとfunction toolsを拒否する）を
+ここでも踏襲。
+
+### プロンプトを弱くすると search_memory を呼ばない
+
+[`src/memoryToolCallTest.ts`](../src/memoryToolCallTest.ts)で実測。
+システムプロンプトが「必要なら検索して」程度の指示だと、
+`reasoning_effort: "none"`のgpt-5.6-lunaは検索を試さずに
+「まだ覚えていないのだ」と即答してしまった（judgeのときの「疑問形に
+釣られる」問題と同系統で、reasoning無効化で浅い応答に倒れやすい）。
+
+「答える前に必ず1回search_memoryを呼び出すこと。呼ぶ前に『知らない』と
+結論づけないこと」まで踏み込んで指示したところ確実に呼ぶようになった
+(`test/`ではなく`src/session/zundamonSession.ts`のsystemPromptに同内容を
+反映済み)。この手のプロンプトは今後も「弱い指示→浅い応答」になりやすい
+ことを念頭に置くこと。
+
+### 通しデモ
+
+[`src/memorySessionDemo.ts`](../src/memorySessionDemo.ts)（`npm run
+memory:session-demo`）で実際のZundamonSessionに統合して確認。
+6ターンの会話（うち1回「覚えておいて」）の後、会話ログが閾値
+（10件）を超えて自動的に短期記憶へ圧縮され（バックグラウンド実行、
+応答のIDLE復帰をブロックしない）、続く「私の好きな食べ物は何だっけ？」
+で`search_memory`が呼ばれ正しく「ずんだ餅」を想起できた。
+
 ## 未決の設計判断（実測値が出たので判断できる状態）
 
 ### 1. 追加発話が通る2経路

@@ -1,6 +1,10 @@
 import OpenAI from "openai";
-import type { ChatMessage, LLMClient, StreamToken } from "./types.js";
+import type { ChatMessage, LLMClient, StreamToken, ToolConfig } from "./types.js";
 import { logLLMCall } from "./callLogger.js";
+
+type OAIMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
+
+const MAX_TOOL_ITERATIONS = 6;
 
 export interface OpenAIClientOptions {
   apiKey: string;
@@ -32,54 +36,139 @@ export class OpenAILLMClient implements LLMClient {
 
   async *streamChat(
     messages: ChatMessage[],
-    signal: AbortSignal
+    signal: AbortSignal,
+    tools?: ToolConfig
   ): AsyncGenerator<StreamToken> {
-    const startedAt = Date.now();
-    let accumulated = "";
-    let errorMsg: string | undefined;
-
-    const stream = await this.client.chat.completions.create(
-      {
-        model: this.mainModel,
-        messages,
-        stream: true,
+    const oaiTools = tools?.definitions.map((t) => ({
+      type: "function" as const,
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters,
       },
-      { signal }
-    );
+    }));
 
-    // グレースフル中断では for await を break で抜ける。その際 finally で
-    // HTTPストリームを明示的に閉じないと、破棄したはずの残りトークンを
-    // 受信し続けて課金・帯域が無駄になる。
-    // なお、消費側が break すると非同期ジェネレータの finally も実行される
-    // （暗黙に .return() が呼ばれる仕様）ため、グレースフル中断で打ち切った
-    // 場合も「そこまでに生成されたテキスト」がログに残る。
-    try {
-      for await (const chunk of stream) {
-        const delta = chunk.choices[0]?.delta?.content ?? "";
-        const finishReason = chunk.choices[0]?.finish_reason;
-        if (delta) {
-          accumulated += delta;
-          yield { text: delta, done: false };
+    let workingMessages: OAIMessage[] = messages.map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
+
+    // ツール呼び出しが続く限りループする（検索してから保存、等の多段呼び出しに対応）。
+    // 無限ループ防止に上限を設ける。
+    for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+      const startedAt = Date.now();
+      let iterText = "";
+      let finishReason: string | null = null;
+      let errorMsg: string | undefined;
+      const toolCallBuilders = new Map<
+        number,
+        { id: string; name: string; args: string }
+      >();
+
+      const stream = await this.client.chat.completions.create(
+        {
+          model: this.mainModel,
+          messages: workingMessages,
+          stream: true,
+          // gpt-5.6系はreasoningモデルで、reasoning_effortが立っていると
+          // /v1/chat/completions 経由のfunction toolsを拒否する(400)。
+          // ツールを渡す場合は無効化する(src/toolCallTest.tsで確認済み)。
+          ...(oaiTools ? { tools: oaiTools, reasoning_effort: "none" } : {}),
+        } as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
+        { signal }
+      );
+
+      // グレースフル中断では for await を break で抜ける。その際 finally で
+      // HTTPストリームを明示的に閉じないと、破棄したはずの残りトークンを
+      // 受信し続けて課金・帯域が無駄になる。
+      // なお、消費側が break すると非同期ジェネレータの finally も実行される
+      // （暗黙に .return() が呼ばれる仕様）ため、グレースフル中断で打ち切った
+      // 場合も「そこまでに生成されたテキスト」がログに残る。
+      try {
+        for await (const chunk of stream) {
+          const choice = chunk.choices[0];
+          const delta = choice?.delta;
+
+          if (delta?.content) {
+            iterText += delta.content;
+            yield { text: delta.content, done: false };
+          }
+
+          for (const tc of delta?.tool_calls ?? []) {
+            const existing = toolCallBuilders.get(tc.index) ?? {
+              id: "",
+              name: "",
+              args: "",
+            };
+            if (tc.id) existing.id = tc.id;
+            if (tc.function?.name) existing.name += tc.function.name;
+            if (tc.function?.arguments) existing.args += tc.function.arguments;
+            toolCallBuilders.set(tc.index, existing);
+          }
+
+          if (choice?.finish_reason) {
+            finishReason = choice.finish_reason;
+          }
         }
-        if (finishReason) {
-          yield { text: "", done: true };
-        }
+      } catch (err) {
+        errorMsg = err instanceof Error ? err.message : String(err);
+        throw err;
+      } finally {
+        stream.controller.abort();
+        logLLMCall({
+          timestamp: new Date(startedAt).toISOString(),
+          kind: "main",
+          model: this.mainModel,
+          messages: workingMessages as unknown as ChatMessage[],
+          responseText:
+            iterText ||
+            (toolCallBuilders.size > 0
+              ? `[tool_calls: ${[...toolCallBuilders.values()].map((t) => t.name).join(", ")}]`
+              : ""),
+          latencyMs: Date.now() - startedAt,
+          error: errorMsg,
+        });
       }
-    } catch (err) {
-      errorMsg = err instanceof Error ? err.message : String(err);
-      throw err;
-    } finally {
-      stream.controller.abort();
-      logLLMCall({
-        timestamp: new Date(startedAt).toISOString(),
-        kind: "main",
-        model: this.mainModel,
-        messages,
-        responseText: accumulated,
-        latencyMs: Date.now() - startedAt,
-        error: errorMsg,
-      });
+
+      const hasToolCalls = toolCallBuilders.size > 0;
+      if (!tools || finishReason !== "tool_calls" || !hasToolCalls) {
+        yield { text: "", done: true };
+        return;
+      }
+
+      const toolCalls = [...toolCallBuilders.entries()]
+        .sort(([a], [b]) => a - b)
+        .map(([, tc]) => tc);
+
+      workingMessages = [
+        ...workingMessages,
+        {
+          role: "assistant",
+          content: iterText || null,
+          tool_calls: toolCalls.map((tc) => ({
+            id: tc.id,
+            type: "function" as const,
+            function: { name: tc.name, arguments: tc.args },
+          })),
+        },
+      ];
+
+      for (const tc of toolCalls) {
+        let result: string;
+        try {
+          result = await tools.onCall(tc.name, tc.args);
+        } catch (err) {
+          result = `エラー: ${err instanceof Error ? err.message : String(err)}`;
+        }
+        workingMessages = [
+          ...workingMessages,
+          { role: "tool", tool_call_id: tc.id, content: result },
+        ];
+      }
     }
+
+    // 上限に達した場合も呼び出し元をハングさせない
+    yield { text: "", done: true };
   }
 
   async judgeContinuation(
@@ -149,6 +238,94 @@ export class OpenAILLMClient implements LLMClient {
       });
       throw err;
     }
+  }
+
+  async summarize(
+    messages: ChatMessage[],
+    priorSummary: string,
+    signal: AbortSignal
+  ): Promise<{ summary: string; facts: string[] }> {
+    const startedAt = Date.now();
+    const transcript = messages
+      .map((m) => `${m.role === "user" ? "ユーザー" : "ずんだもん"}: ${m.content}`)
+      .join("\n");
+
+    const requestMessages: ChatMessage[] = [
+      {
+        role: "system",
+        content:
+          "あなたは音声アシスタントの短期記憶を圧縮する要約器です。" +
+          "以下の「これまでの要約」と「新しい会話ログ」を統合し、今後の会話で" +
+          "参照する価値がある情報だけを残した新しい要約を作ってください。" +
+          "世間話や既に用済みのやりとりは削ってよい。" +
+          'JSON形式で {"summary": string, "facts": string[]} のみを返してください。' +
+          "summaryは2〜3文程度、factsはユーザーについて分かった具体的な事実のみ" +
+          "（無ければ空配列）。",
+      },
+      {
+        role: "user",
+        content:
+          `これまでの要約: ${priorSummary || "(なし)"}\n\n新しい会話ログ:\n${transcript}`,
+      },
+    ];
+
+    try {
+      const res = await this.client.chat.completions.create(
+        {
+          model: this.judgeModel,
+          messages: requestMessages,
+          response_format: { type: "json_object" },
+        },
+        { signal, timeout: this.judgeTimeoutMs }
+      );
+
+      const content = res.choices[0]?.message?.content ?? "{}";
+      const parsed = parseSummaryResponse(content, priorSummary);
+      logLLMCall({
+        timestamp: new Date(startedAt).toISOString(),
+        kind: "judge",
+        model: this.judgeModel,
+        messages: requestMessages,
+        responseText: content,
+        parsed,
+        latencyMs: Date.now() - startedAt,
+      });
+      return parsed;
+    } catch (err) {
+      logLLMCall({
+        timestamp: new Date(startedAt).toISOString(),
+        kind: "judge",
+        model: this.judgeModel,
+        messages: requestMessages,
+        latencyMs: Date.now() - startedAt,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+  }
+}
+
+function parseSummaryResponse(
+  raw: string,
+  fallbackSummary: string
+): { summary: string; facts: string[] } {
+  const stripped = raw
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/, "");
+  const start = stripped.indexOf("{");
+  const end = stripped.lastIndexOf("}");
+  const candidate = start !== -1 && end > start ? stripped.slice(start, end + 1) : stripped;
+
+  try {
+    const parsed = JSON.parse(candidate) as Record<string, unknown>;
+    const facts = Array.isArray(parsed.facts)
+      ? parsed.facts.filter((f): f is string => typeof f === "string")
+      : [];
+    return { summary: String(parsed.summary ?? fallbackSummary), facts };
+  } catch {
+    // パースに失敗しても要約全体を捨てず、元の要約を維持する
+    return { summary: fallbackSummary, facts: [] };
   }
 }
 
