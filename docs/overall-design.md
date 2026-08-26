@@ -124,9 +124,9 @@ LLMに渡すトークンを4種類に整理し、それぞれ扱いを変える�
    `ZundamonSession.onFinalUtterance`への本配線はまだ。
    ウェイクワード認識精度の課題（保留中、`docs/openai-test-handoff.md`）
    を解決してから配線するか判断すること
-2. VOICEVOX層との接続: 音声合成自体の疎通・実再生は確認済み
-   （`src/tts/`、`npm run tts:playback-demo`）。`onSentenceReady`への
-   本配線はまだ
+2. ~~VOICEVOX層との接続~~ → 解決済み。`onSentenceReady`を実際の合成+
+   スピーカー再生(`RealPlaybackQueue`)につなぎ込み、`npm run cli`で
+   テキスト入力→実音声再生まで通しで動作することを確認した
 3. discord.js音声受信・送信の実装
 4. ~~記憶DBのスキーマ・ベクトル化方式~~ → 解決済み（本ドキュメントの
    「記憶(DB)層」参照）。残課題: 長期記憶の自動保存判定の精度検証・
