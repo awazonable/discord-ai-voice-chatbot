@@ -156,6 +156,12 @@ OPENAI_API_KEY=dummy OPENAI_BASE_URL=http://127.0.0.1:8787/v1 \
   MAIN_MODEL=fake-main JUDGE_MODEL=fake-judge npm run preflight
 ```
 
+## 引き継ぎ
+
+実APIでの実測はまだ未達（テスト作成環境にAPIキーが無かったため）。
+現状・再開手順・実測後に決めたい設計判断は
+[`docs/openai-test-handoff.md`](docs/openai-test-handoff.md) に集約してある。
+
 ## 未実装・次のステップ
 
 - STT層（sherpa-onnx-node）との接続 — 現状はキーボード入力で代用
