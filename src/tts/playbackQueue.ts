@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import type { TTSClient } from "./types.js";
-import { playWavFile } from "./playback.js";
+import { PersistentPowerShellPlayer } from "./playback.js";
 
 export interface PlaybackQueueOptions {
   tts: TTSClient;
@@ -19,17 +19,30 @@ export interface PlaybackQueueOptions {
  * 破棄する」シミュレーションでしかない。実際に鳴っている音を止めるには
  * このキュー側でも同じタイミングで truncatePending() を呼ぶ必要がある
  * （呼び出し側は SessionEvents.onAudioTruncated を使って両方に伝える）。
+ *
+ * 再生には PersistentPowerShellPlayer を使う。文ごとにプロセスを
+ * 新規起動する版(playWavFile)は、実測でプロセス起動コストが平均400ms前後
+ * 乗ることを確認済み（src/ttsOverheadTest.ts）。プロセスを使い回すことで
+ * 平均100ms程度まで縮む。
  */
 export class RealPlaybackQueue {
   private pending: string[] = [];
   private processing = false;
   private counter = 0;
+  private player = new PersistentPowerShellPlayer();
 
-  constructor(private opts: PlaybackQueueOptions) {}
+  constructor(private opts: PlaybackQueueOptions) {
+    this.player.start();
+  }
 
   enqueue(text: string) {
     this.pending.push(text);
     void this.drain();
+  }
+
+  /** 再生プロセスを終了する。使い終わったら必ず呼ぶこと。 */
+  close() {
+    this.player.stop();
   }
 
   /** グレースフル中断時: まだ再生を開始していない分をキューから捨てる */
@@ -61,7 +74,7 @@ export class RealPlaybackQueue {
           const path = `output/playback-${++this.counter}.wav`;
           writeFileSync(path, audio);
 
-          const { durationMs } = await playWavFile(path);
+          const { durationMs } = await this.player.play(path);
           this.opts.onSentenceDone?.(text, durationMs);
         } catch (err) {
           this.opts.onError?.(err, text);

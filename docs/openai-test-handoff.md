@@ -251,6 +251,53 @@ web_search({"query":"東京 今日 天気 2026年8月26日"})
 **追加意図**を判定LLM側で区別させる（`is_continuation`とは別に
 `should_discard_current`のようなフィールドを持たせる等）必要がありそう。
 
+## newRoundのバックログ破棄問題を修正
+
+判定LLMの出力に `abandons_current`（今の応答を打ち切りたい意図か／追加で
+聞きたいだけか）を追加した。「やっぱりいいや」的な**打ち切り**と
+「ついでに」的な**追加**を区別させ、`newRound`経路でも打ち切り意図なら
+音声キューの未再生分を破棄するようにした
+（[`zundamonSession.ts`](../src/session/zundamonSession.ts)の`handleFollowup`）。
+`interrupt`経路（テキスト生成が続いている場合）の挙動は変更していない。
+
+判定応答は `{"is_continuation": boolean, "abandons_current": boolean,
+"reasoning": string}` に拡張（[`openaiClient.ts`](../src/llm/openaiClient.ts)、
+`mockClient.ts`、`fakeOpenAIServer.ts`も追随）。フェイクサーバに新規
+シナリオ**S5**（S4と同じ`newRound`経路だが打ち切り要求）を追加し、
+「S4は破棄しない／S5は破棄する」をアサートするようにした
+（`test/fake` `test:fake`で5/5 PASS）。
+
+実API・実音声再生（`tts:playback-demo`）でも確認: 「ずんだもん、遠足の
+持ち物を5個」の1文目再生中に「やっぱりいいや、今何時なのだ？」を注入した
+ところ、シミュレーション(audioClock)・実キュー(RealPlaybackQueue)の両方で
+即座に未再生分が破棄され、時刻の応答がすぐ流れるようになった
+（修正前は最後まで持ち物リストを聞かされていた）。
+
+## 再生オーバーヘッドの切り分け・解消
+
+[`src/ttsOverheadTest.ts`](../src/ttsOverheadTest.ts)（`npm run
+tts:overhead-test`）で、TTS合成は1回だけ行い、同じWAVを
+「(A) 再生のたびにPowerShellプロセスを新規起動」「(B) プロセスを1つ
+使い回す」の両方で再生して壁時計を比較した。あわせてWAVヘッダから
+音声そのものの実長も読み取り（[`tts/wav.ts`](../src/tts/wav.ts)）、
+3者を突き合わせた。
+
+| 文字数 | WAV実長 | 方式A(毎回起動) | 方式B(使い回し) |
+|---|---|---|---|
+| 8文字 | 1291ms | 1781ms (+490ms) | 1445ms (+154ms) |
+| 10文字 | 1611ms | 1976ms (+365ms) | 1678ms (+67ms) |
+| 28文字 | 4800ms | 5185ms (+385ms) | 4873ms (+73ms) |
+
+**平均オーバーヘッド: 方式A=414ms → 方式B=98ms（約76%削減）。** プロセス
+起動コストが犯人だったことを実測で確定。[`src/tts/playback.ts`](../src/tts/playback.ts)
+に`PersistentPowerShellPlayer`を追加し、`RealPlaybackQueue`はこちらを
+既定で使うように変更した（`playWavFile`は単発確認用として残置）。
+
+副産物として、**WAVの実長自体が0.1秒/文字より遅い**ことも判明した
+（161〜171ms/文字、平均約0.165秒/文字）。`audioClock.ts`の
+`SEC_PER_CHAR`を0.1→0.165に更新した（サンプル数3件のみのため、今後の
+実測でさらに精緻化してよい）。
+
 ## SushikiTTSClientの異常系テスト
 
 [`test/fakeTTSServer.ts`](../test/fakeTTSServer.ts) +
@@ -278,6 +325,15 @@ status=403, content-type="application/json"
 崩れるか」は検証していない（クライアント側のエラー処理ではなくVOICEVOX
 側の合成品質の話であり、実API課金を伴う割に得られる情報が少ないため
 スコープ外とした）。
+
+**追記**: `notEnoughPoints`も実際に本番で踏んだ（`tts:playback-demo`実行中に
+ポイント枯渇）。エラー形式は`invalidApiKey`と同じ`403 + {"errorMessage": ...}`
+で、想定通り`TTSError`として検知でき、`RealPlaybackQueue`のエラーハンドリング
+（`onError`で捕捉してセッション全体は落とさない）も正しく機能した。
+
+**⚠ 現在SUSHIKI_API_KEYのポイントが枯渇している。** 次にTTS系スクリプト
+（`tts:test`/`tts:playback-demo`/`tts:overhead-test`）を実行する前に、
+https://su-shiki.com/api/ でポイント残量を確認すること。
 
 ## 未決の設計判断（実測値が出たので判断できる状態）
 

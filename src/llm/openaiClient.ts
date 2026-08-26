@@ -86,7 +86,11 @@ export class OpenAILLMClient implements LLMClient {
     priorContext: ChatMessage[],
     newUtterance: string,
     signal: AbortSignal
-  ): Promise<{ isContinuation: boolean; reasoning: string }> {
+  ): Promise<{
+    isContinuation: boolean;
+    abandonsCurrent: boolean;
+    reasoning: string;
+  }> {
     const startedAt = Date.now();
     const messages: ChatMessage[] = [
       {
@@ -95,11 +99,18 @@ export class OpenAILLMClient implements LLMClient {
           "あなたは音声アシスタントの発話判定器です。" +
           "ユーザーは現在3人で会話しています。あなた（ずんだもん）はその場にいる話者の一人に過ぎず、" +
           "検出される発話のすべてがあなた宛とは限りません。他の参加者への質問や、参加者同士の雑談も混ざります。" +
-          "直前のやりとりの文脈を踏まえ、新しく検出された発話が「あなたへの呼びかけの続き」か" +
-          "「あなた宛ではない発話（他の参加者への質問・参加者同士の会話など）」かを判定してください。" +
-          "疑問形かどうかだけで判定しないこと。疑問文であっても、話題が直前のやりとりと無関係、" +
-          "または他の参加者に向けられていると読めるなら、あなた宛ではないと判定してください。" +
-          'JSON形式で {"is_continuation": boolean, "reasoning": string} のみを返してください。',
+          "直前のやりとりの文脈を踏まえ、新しく検出された発話について次の2点を判定してください。\n" +
+          "(1) is_continuation: 「あなたへの呼びかけの続き」か「あなた宛ではない発話" +
+          "（他の参加者への質問・参加者同士の会話など）」か。疑問形かどうかだけで判定しないこと。" +
+          "疑問文であっても、話題が直前のやりとりと無関係、または他の参加者に向けられていると" +
+          "読めるなら、あなた宛ではないと判定してください。\n" +
+          "(2) abandons_current: is_continuationがtrueの場合のみ意味を持つ。" +
+          "「やっぱりいいや」「それより」のように、今あなたが話している内容を打ち切って" +
+          "別の話に切り替えたい意図ならtrue。「ついでに」「あと」「それと」のように、" +
+          "今話している内容はそのまま聞いた上で追加で聞きたいだけならfalse。" +
+          "判断がつかない場合もfalseにしてください。\n" +
+          'JSON形式で {"is_continuation": boolean, "abandons_current": boolean, "reasoning": string} ' +
+          "のみを返してください。",
       },
       ...priorContext,
       { role: "user", content: `新しい発話: ${newUtterance}` },
@@ -152,6 +163,7 @@ export class OpenAILLMClient implements LLMClient {
  */
 export function parseJudgeResponse(raw: string): {
   isContinuation: boolean;
+  abandonsCurrent: boolean;
   reasoning: string;
 } {
   const stripped = raw
@@ -169,11 +181,13 @@ export function parseJudgeResponse(raw: string): {
     const parsed = JSON.parse(candidate) as Record<string, unknown>;
     return {
       isContinuation: Boolean(parsed.is_continuation),
+      abandonsCurrent: Boolean(parsed.abandons_current),
       reasoning: String(parsed.reasoning ?? ""),
     };
   } catch {
     return {
       isContinuation: false,
+      abandonsCurrent: false,
       reasoning: `判定応答のパースに失敗したため継続なしとして扱った: ${raw.slice(0, 120)}`,
     };
   }

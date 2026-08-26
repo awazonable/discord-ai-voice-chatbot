@@ -15,6 +15,8 @@ export const FAKE_JUDGE_MODEL = "fake-judge";
 
 /** 追加発話が「呼びかけの続き」とみなされる語 */
 const CONTINUATION_MARKERS = ["やっぱり", "ついでに", "それと", "あと"];
+/** 継続のうち「今の話を打ち切りたい」とみなされる語（それ以外は追加要求として扱う） */
+const ABANDON_MARKERS = ["やっぱり"];
 
 const RESPONSES: Array<[RegExp, string]> = [
   // 判定往復(既定600ms)より長く喋り続ける応答。グレースフル中断の経路を
@@ -127,6 +129,8 @@ export async function startFakeServer(
         const isContinuation = CONTINUATION_MARKERS.some((m) =>
           userText.includes(m)
         );
+        const abandonsCurrent =
+          isContinuation && ABANDON_MARKERS.some((m) => userText.includes(m));
         res.writeHead(200, { "content-type": "application/json" });
         res.end(
           JSON.stringify({
@@ -141,6 +145,7 @@ export async function startFakeServer(
                   role: "assistant",
                   content: JSON.stringify({
                     is_continuation: isContinuation,
+                    abandons_current: abandonsCurrent,
                     reasoning: isContinuation
                       ? "呼びかけの言い直し・追加要求とみなした(fake)"
                       : "別話題の発話とみなした(fake)",

@@ -9,6 +9,7 @@ import {
   MissingSushikiApiKeyError,
 } from "./config.js";
 import type { Utterance } from "./session/types.js";
+import { SEC_PER_CHAR } from "./session/audioClock.js";
 
 /**
  * onSentenceReady を実物の音声合成+スピーカー再生につなぎ込んで、
@@ -20,7 +21,6 @@ import type { Utterance } from "./session/types.js";
  * コストを抑えるため、S3シナリオ(遠足の持ち物10個)より短い題材を使う。
  */
 
-const ESTIMATED_SEC_PER_CHAR = 0.1; // audioClock.ts と同じ値
 
 function utt(text: string): Utterance {
   return { text, speakerId: "playback-demo", timestamp: Date.now() };
@@ -63,7 +63,7 @@ async function main() {
       console.log(`  🔊 再生開始: "${text}"`);
     },
     onSentenceDone: (text, measuredMs) => {
-      const estimatedMs = text.length * ESTIMATED_SEC_PER_CHAR * 1000;
+      const estimatedMs = text.length * SEC_PER_CHAR * 1000;
       console.log(
         `  ✓ 再生完了 (${text.length}文字) 見積り=${estimatedMs.toFixed(0)}ms ` +
           `実測=${measuredMs}ms 差=${(measuredMs - estimatedMs).toFixed(0)}ms`
@@ -117,6 +117,7 @@ async function main() {
     await new Promise((r) => setTimeout(r, 200));
   }
 
+  queue.close();
   console.log("\n=== デモ終了 ===");
   process.exit(0);
 }

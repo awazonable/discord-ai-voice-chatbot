@@ -111,13 +111,15 @@ export class ZundamonSession {
     const judgeController = new AbortController();
 
     let isContinuation: boolean;
+    let abandonsCurrent: boolean;
     let reasoning: string;
     try {
-      ({ isContinuation, reasoning } = await this.llm.judgeContinuation(
-        this.conversationLog,
-        utt.text,
-        judgeController.signal
-      ));
+      ({ isContinuation, abandonsCurrent, reasoning } =
+        await this.llm.judgeContinuation(
+          this.conversationLog,
+          utt.text,
+          judgeController.signal
+        ));
     } catch (err) {
       if (isAbortError(err)) return;
       // 判定が落ちても進行中の応答は壊さない。継続なしとして扱う。
@@ -158,6 +160,20 @@ export class ZundamonSession {
     } else {
       // 判定中にラウンドが終わっていた場合は、中断ではなく新しい
       // ラウンドとして即座に走らせる。
+      //
+      // ただし「テキストが終わっている」ことは「音声が再生し終わっている」
+      // ことを意味しない（テキスト生成の方が音声再生よりずっと速いため）。
+      // abandonsCurrent（＝今の話を打ち切りたい意図）なら、テキスト側で
+      // 中断するものが無くても、音声キューにまだ残っている未再生分は
+      // ここで破棄する。「ついでに」のような追加要求(abandonsCurrent=false)
+      // では、今流れている音声はそのまま聞かせたいので破棄しない。
+      if (abandonsCurrent) {
+        const { discarded, discardedChars, savedMs } =
+          this.audioClock.truncateToCurrent();
+        if (discarded > 0) {
+          this.events.onAudioTruncated?.(discarded, discardedChars, savedMs);
+        }
+      }
       this.startRound();
     }
   }

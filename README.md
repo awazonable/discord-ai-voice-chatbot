@@ -29,6 +29,7 @@ cp .env.example .env
 | `npm run tts:test` | 必要(SUSHIKI_API_KEY) | 少 | 音声合成(su-shiki VOICEVOX API)の単発疎通確認。output/にwavを保存 |
 | `npm run tts:playback-demo` | 必要(両方) | 中 | onSentenceReadyを実際の合成+スピーカー再生につなぎ込んで実測 |
 | `npm run test:tts-fake` | 不要 | なし | TTSクライアントの異常系(HTTP500・不正JSON等)をフェイクサーバで検証 |
+| `npm run tts:overhead-test` | 必要(SUSHIKI_API_KEY) | 少(合成1回のみ) | 再生方式ごとのオーバーヘッドをWAV実長と比較 |
 
 ### 1. モックLLMでロジック検証（API課金なし）
 
@@ -148,8 +149,11 @@ src/
   tts/
     types.ts             TTSクライアントの抽象インターフェース
     sushikiClient.ts      su-shiki(Web版VOICEVOX API)実装
-    playback.ts           WAVをホストスピーカーで再生(Windows専用、疎通確認用)
+    playback.ts           WAVをホストスピーカーで再生(Windows専用)。
+                          PersistentPowerShellPlayer(プロセス使い回し、既定)と
+                          playWavFile(毎回新規起動、単発確認用)の2実装
     playbackQueue.ts       onSentenceReadyから渡された文を順番に合成→再生する実キュー
+    wav.ts                 WAVヘッダから実際の音声長(ms)を読み取る
   scenarios.ts          モックLLMでの自動シナリオテスト
   scenarioRunner.ts     シナリオ定義と実行（real / fake で共用）
   realScenarios.ts      実APIでのシナリオ実行エントリ
@@ -157,6 +161,7 @@ src/
   cli.ts                実APIでの対話的CLI検証
   ttsTest.ts              音声合成の単発疎通テスト（話者一覧取得+短文合成）
   ttsPlaybackDemo.ts       onSentenceReadyを実際の再生につなぎ込むデモ
+  ttsOverheadTest.ts       再生方式ごとのオーバーヘッド比較(WAV実長との突き合わせ)
 test/
   fakeOpenAIServer.ts   OpenAI互換の最小フェイクサーバ（SSE・中断検知つき）
   runAgainstFake.ts     フェイクサーバに対する統合テスト

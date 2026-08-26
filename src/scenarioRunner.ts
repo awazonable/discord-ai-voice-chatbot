@@ -33,6 +33,11 @@ export interface Scenario {
   followup?: { text: string; at: Trigger };
   /** 許容する経路。実測がここに含まれなければFAIL。 */
   expectPaths: FollowupPath[];
+  /**
+   * 音声キューの未再生分が破棄されるべきか(onAudioTruncated発火の有無)。
+   * 未指定なら検査しない。
+   */
+  expectAudioTruncated?: boolean;
   /** 応答が途中で止まるのを待つ最大時間 */
   timeoutMs?: number;
   /** IDLEがこの時間続いたらシナリオ完了とみなす。判定往復より長くとる。 */
@@ -74,10 +79,29 @@ export const SCENARIOS: Scenario[] = [
   {
     name: "S4 応答完了後の追加発話",
     purpose:
-      "判定が返る頃にはラウンドが終わっているケース。発話が握り潰されず新ラウンドが走ること。",
+      "判定が返る頃にはラウンドが終わっているケース。発話が握り潰されず新ラウンドが走ること。" +
+      "「ついでに」は追加要求なので、まだ再生していない音声があっても破棄しない。",
     wake: "ずんだもん、こんにちは。",
     followup: { text: "ついでに自己紹介して", at: { kind: "afterFinal" } },
     expectPaths: ["newRound"],
+    expectAudioTruncated: false,
+  },
+  {
+    name: "S5 応答完了後の打ち切り要求",
+    purpose:
+      "S4と同じくnewRound経路だが、「やっぱり」は打ち切り要求。" +
+      "テキストは生成し終わっていても、まだ再生していない音声キューは破棄されること。",
+    // 判定往復(600ms)より先にテキスト生成が終わるよう、S4と同様
+    // afterFinalで注入する。ただし応答自体は長くして、音声換算では
+    // まだ再生し終わっていない状態を作る。
+    wake:
+      "ずんだもん、長い話をして。遠足の持ち物を10個、ひとつずつ順番に説明して。",
+    followup: {
+      text: "やっぱりいいや、明日の天気を教えて",
+      at: { kind: "afterFinal" },
+    },
+    expectPaths: ["newRound"],
+    expectAudioTruncated: true,
   },
 ];
 
@@ -98,6 +122,7 @@ export async function runScenario(
 
   let sentenceCount = 0;
   let interrupted = false;
+  let audioTruncated = false;
   let roundsStarted = 0;
   let finalCount = 0;
   let sawError = false;
@@ -145,6 +170,7 @@ export async function runScenario(
       console.log(`  [中断要求] ${r}`);
     },
     onAudioTruncated: (n, chars, savedMs) => {
+      audioTruncated = true;
       console.log(
         `  [音声破棄] 未再生の${n}文(${chars}文字、音声換算${(savedMs / 1000).toFixed(1)}s分)を` +
           `キューから破棄`
@@ -204,7 +230,8 @@ export async function runScenario(
   const finalState = session.getState();
   console.log(
     `  --- 実測: outcome=${outcome} state=${finalState} 文数=${sentenceCount} ` +
-      `ラウンド数=${roundsStarted} 最終応答=${finalCount} 経路=${actualPath ?? "なし"}`
+      `ラウンド数=${roundsStarted} 最終応答=${finalCount} 経路=${actualPath ?? "なし"} ` +
+      `音声破棄=${audioTruncated}`
   );
 
   const pathOk =
@@ -212,12 +239,23 @@ export async function runScenario(
       ? actualPath === null
       : actualPath !== null && sc.expectPaths.includes(actualPath);
 
+  const audioTruncatedOk =
+    sc.expectAudioTruncated === undefined ||
+    sc.expectAudioTruncated === audioTruncated;
+
   const ok =
     outcome === "done" &&
     !sawError &&
     finalState === "IDLE" &&
     sentenceCount > 0 &&
-    pathOk;
+    pathOk &&
+    audioTruncatedOk;
+
+  if (!audioTruncatedOk) {
+    console.log(
+      `  !!! 期待 音声破棄=${sc.expectAudioTruncated} / 実測 音声破棄=${audioTruncated}`
+    );
+  }
 
   if (!pathOk) {
     console.log(
