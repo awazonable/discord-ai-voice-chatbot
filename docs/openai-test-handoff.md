@@ -352,6 +352,44 @@ status=403, content-type="application/json"
 （`tts:test`/`tts:playback-demo`/`tts:overhead-test`）を実行する前に、
 https://su-shiki.com/api/ でポイント残量を確認すること。
 
+## Discord接続の実測
+
+`npm run discord:test`でBotログイン→ボイスチャンネル参加→VOICEVOX音声
+再生→テキストチャンネル報告まで通しで確認。ネイティブビルドを避けるため
+opusscript(pure JS Opus) + libsodium-wrappers(pure JS/WASM暗号化)を採用
+（ffmpegはシステムに既存のものを利用）。
+
+### 実音声受信+STTの実測(npm run discord:receive-test)
+
+実際にDiscordボイスチャンネルで話してもらい、`receiver.subscribe`→
+prism-mediaでOpusデコード→`SttEngine`という経路で認識できることを確認。
+「めんどくさいんだけどなんか自動で再生してくんないかな」
+「ずんだもん聞こえる」など、長めの自然な発話もかなり正確に認識できた。
+興味深いことに、この実発話では「ずんだもん」の「ず」が欠落する現象は
+見られなかった（前述のTTS合成音声での実験とは違う結果）。人間の発話は
+息継ぎ・口の動き出しなど、コールドスタートのTTS音声には無い音響的な
+文脈がVADのオンセット検出を助けている可能性がある。
+
+**修正したバグ**: Discordの`speaking`イベントの`"start"`は、同一の発話中
+でも短い間が空くたびに何度も発火する(実測で1発話につき10回以上)。
+そのたびに`receiver.subscribe()`していたところ、同じ音声ストリームに
+複数のOpusデコーダが同時に読み書きすることになり、opusscriptのWASM
+デコーダが破損した(`RuntimeError: memory access out of bounds`)。
+ユーザーごとに「購読中」フラグを持ち、二重購読を防ぐことで解決
+(`discordReceiveTest.ts`の`activeSubscriptions`)。
+
+**既知の課題(保留中)**: 上記修正後も、同一ユーザーの2発話目以降で
+まれに`circular-buffer.cc:Get/Pop: Invalid n: -4064. size: 1536`という
+sherpa-onnxのネイティブ層エラーがstderrに出ることがある。JS例外としては
+捕捉されずクラッシュもしないが、その区間の認識結果が壊れる
+（実測: 直後に`""(0ms)`のような空の結果が入り、その後は復帧する）。
+`SttEngine`をユーザーごとに使い回している(`getEngine(userId)`)ため、
+前の発話セッション終了時にVAD/CircularBufferの内部状態が完全には
+リセットされておらず、次の発話開始時に不整合を起こしている可能性が高い。
+対策候補: 発話終了(`decoder.on("end")`)のたびに`SttEngine`を作り直す
+（コストは軽い）か、`SttEngine`に明示的な`reset()`を実装して
+`vad.reset()`・内部バッファのクリアを行う。
+
 ## STT層(sherpa-onnx-node)の疎通と既知の課題
 
 `docs/stt-design.md`に沿ってReazonSpeech Zipformer(int8) + Silero VAD(v5)を

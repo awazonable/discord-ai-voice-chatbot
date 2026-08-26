@@ -1,7 +1,7 @@
 import type { LLMClient, ChatMessage, ToolConfig } from "../llm/types.js";
 import { isAbortError } from "../llm/errors.js";
 import type { SessionEvents, SessionState, Utterance } from "./types.js";
-import { detectWakeWord } from "./wakeword.js";
+import { detectWakeWord, stripWakeWord } from "./wakeword.js";
 import { SentenceStreamBuffer } from "./sentenceBuffer.js";
 import { AudioClock } from "./audioClock.js";
 import { ShortTermMemory } from "../memory/shortTermMemory.js";
@@ -121,6 +121,17 @@ export class ZundamonSession {
   }
 
   private async handleFollowup(utt: Utterance) {
+    // 判定コスト最適化: ウェイクワードだけ(本題が空)の発話は、LLM判定に
+    // かけるまでもなく「継続なし」で確定できる。呼びかけ語の言い直しや
+    // マイク越しの誤検知など、実運用で頻出しうるケース。判定LLMの
+    // 往復(実測で数百ms〜数秒)をまるごと省略できる。
+    if (stripWakeWord(utt.text).trim().length === 0) {
+      if (this.events.onJudge) {
+        this.events.onJudge(false, "呼びかけ語のみのためローカル判定(LLM未呼び出し)", utt.text);
+      }
+      return;
+    }
+
     const judgeController = new AbortController();
 
     let isContinuation: boolean;

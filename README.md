@@ -52,6 +52,8 @@ gh release download asr-models -R k2-fsa/sherpa-onnx -p "silero_vad_v5.onnx"
 | `npm run stt:test` | 不要 | なし | STT(ReazonSpeech Zipformer)の疎通確認。同梱テスト音声+TTS閉ループ |
 | `npm run stt:stream-test` | 必要(TTS用) | ごく少 | VAD+STTのストリーミング疑似投入テスト |
 | `npm run discord:test` | 必要(Discord+TTS) | 少 | Discord接続・ボイスチャンネル参加・音声再生・テキスト報告の疎通確認 |
+| `npm run discord:receive-test` | 必要(Discord) | なし | ボイスチャンネルでの発話を受信しSTTで認識(要: 人間が実際に話す) |
+| `npm run test:judge-optimization` | 不要 | なし | ウェイクワードのみの発話でLLM判定がスキップされることを確認 |
 
 ### 1. モックLLMでロジック検証（API課金なし）
 
@@ -192,6 +194,7 @@ src/
   sttTest.ts               STT単体の疎通テスト(同梱テスト音声+TTS閉ループ)
   sttStreamTest.ts          VAD+STTのストリーミング疑似投入テスト
   discordTest.ts            Discord接続・ボイスチャンネル参加・音声再生の疎通テスト
+  discordReceiveTest.ts     Discordボイスチャンネルの音声受信+STT疎通テスト
   scenarios.ts          モックLLMでの自動シナリオテスト
   scenarioRunner.ts     シナリオ定義と実行（real / fake で共用）
   realScenarios.ts      実APIでのシナリオ実行エントリ
@@ -206,6 +209,7 @@ test/
   serveFake.ts          フェイクサーバの単体起動（preflightの動作確認用）
   fakeTTSServer.ts        su-shiki互換の最小フェイクサーバ（異常系検証用）
   runTTSErrorTests.ts     SushikiTTSClientの異常系テスト
+  testJudgeOptimization.ts 判定コスト最適化(ウェイクワードのみの発話でLLM省略)の検証
 ```
 
 ### APIキー無しで preflight / scenarios:real を試す

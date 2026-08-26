@@ -18,8 +18,10 @@
     "stt:test": "tsx src/sttTest.ts",
     "stt:stream-test": "tsx src/sttStreamTest.ts",
     "discord:test": "tsx src/discordTest.ts",
+    "discord:receive-test": "tsx src/discordReceiveTest.ts",
     "test:fake": "tsx test/runAgainstFake.ts",
     "test:tts-fake": "tsx test/runTTSErrorTests.ts",
+    "test:judge-optimization": "tsx test/testJudgeOptimization.ts",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [],
