@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { loadConfig, MissingSushikiApiKeyError } from "./config.js";
-import { SushikiTTSClient, findZundamonSpeakerId } from "./tts/sushikiClient.js";
+import { loadConfig } from "./config.js";
+import { findZundamonSpeakerId } from "./tts/sushikiClient.js";
+import { createTTSClient, describeTTSConfig } from "./tts/createTTSClient.js";
 import { playWavFile, PersistentPowerShellPlayer } from "./tts/playback.js";
 import { getWavDurationMs } from "./tts/wav.js";
 
@@ -23,11 +24,12 @@ const TEST_SENTENCES = [
 
 async function main() {
   const cfg = loadConfig();
-  if (!cfg.sushikiApiKey) throw new MissingSushikiApiKeyError();
 
-  console.log("=== 再生オーバーヘッド切り分けテスト ===\n");
+  console.log("=== 再生オーバーヘッド切り分けテスト ===");
+  console.log(describeTTSConfig(cfg));
+  console.log();
 
-  const tts = new SushikiTTSClient({ apiKey: cfg.sushikiApiKey });
+  const tts = createTTSClient(cfg);
   const speakers = await tts.listSpeakers();
   const speakerId = findZundamonSpeakerId(speakers) ?? 3;
 

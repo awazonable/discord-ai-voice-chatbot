@@ -251,6 +251,23 @@ web_search({"query":"東京 今日 天気 2026年8月26日"})
 **追加意図**を判定LLM側で区別させる（`is_continuation`とは別に
 `should_discard_current`のようなフィールドを持たせる等）必要がありそう。
 
+## ローカルVOICEVOXエンジンに対応
+
+su-shiki(Web API)はポイント消費・レート制限があり反復検証に向かないため、
+ローカルで起動したVOICEVOXエンジン(REST API, `http://127.0.0.1:50021`)にも
+対応した。[`src/tts/localVoicevoxClient.ts`](../src/tts/localVoicevoxClient.ts)
+（`audio_query`→`synthesis`の2段階呼び出し。su-shikiの単発呼び出しとは
+プロトコルが異なる）を追加し、[`src/tts/createTTSClient.ts`](../src/tts/createTTSClient.ts)
+で `.env` の `VOICEVOX_BASE_URL` が設定されていればこちらを優先するように
+した（無ければ`SUSHIKI_API_KEY`にフォールバック）。`ttsTest.ts`・
+`ttsPlaybackDemo.ts`・`ttsOverheadTest.ts`は全てこの切り替えに追随済み。
+
+ローカルVOICEVOXで`tts:playback-demo`を再実行し、newRound破棄修正
+（104文字・17.2秒分を正しく破棄）とオーバーヘッド低減（差=91〜215ms、
+ネットワーク遅延が無い分su-shiki実行時よりさらに小さい）の両方を
+再確認できた。ポイント枯渇の心配が無いため、今後の反復検証は基本的に
+こちらを使う。
+
 ## newRoundのバックログ破棄問題を修正
 
 判定LLMの出力に `abandons_current`（今の応答を打ち切りたい意図か／追加で

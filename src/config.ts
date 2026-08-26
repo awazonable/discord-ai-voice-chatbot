@@ -19,6 +19,13 @@ export interface AppConfig {
   baseURL?: string;
   /** su-shiki.com が提供するWeb版VOICEVOX APIのキー。音声合成の検証時のみ必要。 */
   sushikiApiKey?: string;
+  /**
+   * ローカルVOICEVOXエンジンのベースURL。設定されていれば
+   * su-shiki(Web API)より優先してこちらを使う（ポイント消費・レート制限が
+   * 無く開発中の反復に向くため）。
+   *   例: VOICEVOX_BASE_URL=http://127.0.0.1:50021
+   */
+  voicevoxBaseURL?: string;
 }
 
 export class MissingSushikiApiKeyError extends Error {
@@ -53,6 +60,7 @@ export function loadConfig(): AppConfig {
     judgeModel: process.env.JUDGE_MODEL ?? DEFAULT_JUDGE_MODEL,
     baseURL: process.env.OPENAI_BASE_URL || undefined,
     sushikiApiKey: process.env.SUSHIKI_API_KEY || undefined,
+    voicevoxBaseURL: process.env.VOICEVOX_BASE_URL || undefined,
   };
 }
 

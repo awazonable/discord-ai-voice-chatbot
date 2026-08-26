@@ -1,9 +1,10 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { loadConfig, MissingSushikiApiKeyError } from "./config.js";
-import { SushikiTTSClient, findZundamonSpeakerId } from "./tts/sushikiClient.js";
+import { loadConfig } from "./config.js";
+import { findZundamonSpeakerId } from "./tts/sushikiClient.js";
+import { createTTSClient, describeTTSConfig } from "./tts/createTTSClient.js";
 
 /**
- * 音声合成(su-shiki VOICEVOX API)の単発疎通テスト。
+ * 音声合成の単発疎通テスト（ローカルVOICEVOX優先、無ければsu-shiki）。
  * 話者一覧を取得し、可能なら「ずんだもん / ノーマル」を選んで、
  * 短い文を実際に合成してファイルに保存する（耳で確認できるように）。
  */
@@ -19,17 +20,18 @@ function extFromContentType(contentType: string): string {
 
 async function main() {
   const cfg = loadConfig();
-  if (!cfg.sushikiApiKey) throw new MissingSushikiApiKeyError();
+  const client = createTTSClient(cfg);
 
-  console.log("=== TTS(su-shiki VOICEVOX API) 疎通テスト ===");
+  console.log("=== TTS 疎通テスト ===");
+  console.log(describeTTSConfig(cfg));
   console.log(`  test text: "${TEST_TEXT}" (${TEST_TEXT.length}文字)`);
-  console.log(
-    `  概算コスト: 1500 + 100×${TEST_TEXT.length} = ${1500 + 100 * TEST_TEXT.length} ポイント` +
-      "（公式ドキュメント記載の計算式より。話者一覧取得は別途）"
-  );
+  if (!cfg.voicevoxBaseURL) {
+    console.log(
+      `  概算コスト: 1500 + 100×${TEST_TEXT.length} = ${1500 + 100 * TEST_TEXT.length} ポイント` +
+        "（su-shiki公式ドキュメント記載の計算式より。話者一覧取得は別途）"
+    );
+  }
   console.log();
-
-  const client = new SushikiTTSClient({ apiKey: cfg.sushikiApiKey });
 
   console.log("[1] 話者一覧を取得中...");
   let speakerId = 3; // ローカルVOICEVOXの慣例上「ずんだもん ノーマル」が3のことが多いが未確認のフォールバック

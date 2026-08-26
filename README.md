@@ -149,6 +149,9 @@ src/
   tts/
     types.ts             TTSクライアントの抽象インターフェース
     sushikiClient.ts      su-shiki(Web版VOICEVOX API)実装
+    localVoicevoxClient.ts ローカルVOICEVOXエンジン(REST API)実装
+    createTTSClient.ts     .envの設定からどちらを使うか選ぶ
+                          (VOICEVOX_BASE_URL優先、無ければsu-shiki)
     playback.ts           WAVをホストスピーカーで再生(Windows専用)。
                           PersistentPowerShellPlayer(プロセス使い回し、既定)と
                           playWavFile(毎回新規起動、単発確認用)の2実装

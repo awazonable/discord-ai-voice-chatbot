@@ -1,13 +1,9 @@
 import { OpenAILLMClient } from "./llm/openaiClient.js";
 import { ZundamonSession } from "./session/zundamonSession.js";
-import { SushikiTTSClient, findZundamonSpeakerId } from "./tts/sushikiClient.js";
+import { findZundamonSpeakerId } from "./tts/sushikiClient.js";
+import { createTTSClient, describeTTSConfig } from "./tts/createTTSClient.js";
 import { RealPlaybackQueue } from "./tts/playbackQueue.js";
-import {
-  loadConfig,
-  describeConfig,
-  MissingApiKeyError,
-  MissingSushikiApiKeyError,
-} from "./config.js";
+import { loadConfig, describeConfig, MissingApiKeyError } from "./config.js";
 import type { Utterance } from "./session/types.js";
 import { SEC_PER_CHAR } from "./session/audioClock.js";
 
@@ -37,10 +33,9 @@ async function main() {
     }
     throw err;
   }
-  if (!cfg.sushikiApiKey) throw new MissingSushikiApiKeyError();
-
   console.log("=== 実音声再生つき セッションデモ ===");
   console.log(describeConfig(cfg));
+  console.log(describeTTSConfig(cfg));
   console.log();
 
   const llm = new OpenAILLMClient({
@@ -49,7 +44,7 @@ async function main() {
     judgeModel: cfg.judgeModel,
     baseURL: cfg.baseURL,
   });
-  const tts = new SushikiTTSClient({ apiKey: cfg.sushikiApiKey });
+  const tts = createTTSClient(cfg);
 
   console.log("話者一覧を取得中...");
   const speakers = await tts.listSpeakers();
