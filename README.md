@@ -51,6 +51,7 @@ gh release download asr-models -R k2-fsa/sherpa-onnx -p "silero_vad_v5.onnx"
 | `npm run memory:session-demo` | 必要+Qdrant | 中 | 短期記憶の自動圧縮+長期記憶の想起を実セッションで確認 |
 | `npm run stt:test` | 不要 | なし | STT(ReazonSpeech Zipformer)の疎通確認。同梱テスト音声+TTS閉ループ |
 | `npm run stt:stream-test` | 必要(TTS用) | ごく少 | VAD+STTのストリーミング疑似投入テスト |
+| `npm run discord:test` | 必要(Discord+TTS) | 少 | Discord接続・ボイスチャンネル参加・音声再生・テキスト報告の疎通確認 |
 
 ### 1. モックLLMでロジック検証（API課金なし）
 
@@ -190,6 +191,7 @@ src/
     sttEngine.ts            VAD(Silero)による発話区間検出+オフライン認識(ReazonSpeech)
   sttTest.ts               STT単体の疎通テスト(同梱テスト音声+TTS閉ループ)
   sttStreamTest.ts          VAD+STTのストリーミング疑似投入テスト
+  discordTest.ts            Discord接続・ボイスチャンネル参加・音声再生の疎通テスト
   scenarios.ts          モックLLMでの自動シナリオテスト
   scenarioRunner.ts     シナリオ定義と実行（real / fake で共用）
   realScenarios.ts      実APIでのシナリオ実行エントリ

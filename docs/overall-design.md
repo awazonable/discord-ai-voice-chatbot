@@ -127,7 +127,11 @@ LLMに渡すトークンを4種類に整理し、それぞれ扱いを変える�
 2. ~~VOICEVOX層との接続~~ → 解決済み。`onSentenceReady`を実際の合成+
    スピーカー再生(`RealPlaybackQueue`)につなぎ込み、`npm run cli`で
    テキスト入力→実音声再生まで通しで動作することを確認した
-3. discord.js音声受信・送信の実装
+3. discord.js音声受信・送信の実装: **送信は疎通確認済み**
+   （`npm run discord:test`。ログイン→ボイスチャンネル参加→VOICEVOX音声
+   再生→テキストチャンネルへ報告、まで通しで動作）。native buildを避け
+   opusscript(pure JS Opus) + libsodium-wrappers(pure JS/WASM暗号化)を
+   採用。**受信(`receiver.subscribe`)は未着手**
 4. ~~記憶DBのスキーマ・ベクトル化方式~~ → 解決済み（本ドキュメントの
    「記憶(DB)層」参照）。残課題: 長期記憶の自動保存判定の精度検証・
    短期記憶の圧縮閾値のチューニング

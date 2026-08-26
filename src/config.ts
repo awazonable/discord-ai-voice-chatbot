@@ -32,6 +32,23 @@ export interface AppConfig {
   embeddingModel: string;
   /** sherpa-onnx用モデル一式を置くディレクトリ。既定は .models/ 。 */
   modelsDir: string;
+  discord?: {
+    botToken: string;
+    devGuildId?: string;
+    devChannelIdText?: string;
+    devChannelIdVoice?: string;
+    devUserIdAdmin?: string;
+  };
+}
+
+export class MissingDiscordTokenError extends Error {
+  constructor() {
+    super(
+      "環境変数 DISCORD_BOT_TOKEN が設定されていません。\n" +
+        "  Discord Developer Portal でBotを作成し、.env に設定してください。"
+    );
+    this.name = "MissingDiscordTokenError";
+  }
 }
 
 export class MissingSushikiApiKeyError extends Error {
@@ -70,6 +87,15 @@ export function loadConfig(): AppConfig {
     qdrantURL: process.env.QDRANT_URL || "http://127.0.0.1:6333",
     embeddingModel: process.env.EMBEDDING_MODEL || "text-embedding-3-small",
     modelsDir: process.env.MODELS_DIR || ".models",
+    discord: process.env.DISCORD_BOT_TOKEN
+      ? {
+          botToken: process.env.DISCORD_BOT_TOKEN,
+          devGuildId: process.env.DEV_GUILD_ID || undefined,
+          devChannelIdText: process.env.DEV_CHANNEL_ID_TEXT || undefined,
+          devChannelIdVoice: process.env.DEV_CHANNEL_ID_VOICE || undefined,
+          devUserIdAdmin: process.env.DEV_USER_ID_ADMIN || undefined,
+        }
+      : undefined,
   };
 }
 
