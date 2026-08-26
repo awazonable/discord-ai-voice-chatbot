@@ -139,7 +139,15 @@ LLMに渡すトークンを4種類に整理し、それぞれ扱いを変える�
    追加発話はLLM判定を呼ばずローカルで「継続なし」に確定するようにした
    （`zundamonSession.ts`の`handleFollowup`、`test/testJudgeOptimization.ts`
    で判定リクエスト数が増えないことを確認）
-6. 話者複数対応（現状のPoCは1話者分の設計）
+6. ~~話者複数対応~~ → ベースライン実装済み。(a) `Utterance.speakerName` /
+   `ChatMessage.name`（OpenAI APIのmessage.name）で会話ログ上の発言者を
+   区別できるようにした（`test/testMultiSpeaker.ts`で2話者の発言に
+   異なるnameが付くことを確認）。(b) STT側は`MultiSpeakerStt`
+   （`src/stt/multiSpeakerStt.ts`）で話者ごとに独立したSttEngineを
+   管理する設計にした（stt-design.mdの方針どおり）。**未対応**:
+   セッション(状態機械)自体は依然1つ共有（複数話者が同じ会話に参加する
+   前提で、各話者に個別のZundamonSessionは持たせていない。今のところ
+   これは意図した設計 — 詳細はstt-design.md「Discord音声受信との接続」）
 7. newRoundのバックログ破棄における「打ち切り意図」判定の精度検証
    （`docs/openai-test-handoff.md`参照）
 8. Discord音声受信の既知バグ（保留中）: `circular-buffer.cc: Invalid n`

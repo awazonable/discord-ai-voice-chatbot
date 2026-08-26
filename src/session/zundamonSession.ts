@@ -14,6 +14,15 @@ const COMPACT_THRESHOLD_MESSAGES = 10;
 const KEEP_RECENT_MESSAGES = 6;
 
 /**
+ * OpenAI APIのmessage.nameは英数字・アンダースコア・ハイフンのみ許容。
+ * Discordの表示名は絵文字や記号を含みうるため、そのままでは使えない。
+ */
+function sanitizeSpeakerName(raw: string): string {
+  const cleaned = raw.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64);
+  return cleaned || "speaker";
+}
+
+/**
  * 1話者分のずんだもんセッション。
  *
  * 方式: ウェイクワード検知したら「猶予ウィンドウで待つ」のではなく
@@ -62,6 +71,19 @@ export class ZundamonSession {
     return this.state;
   }
 
+  /**
+   * 発話を会話ログ用のメッセージに変換する。話者名(name)を載せることで、
+   * 複数話者が同じ会話に参加していてもLLMが「誰の発言か」を区別できる
+   * ようにする（roleは全員"user"になるため、それだけでは区別が付かない）。
+   */
+  private toUserMessage(utt: Utterance): ChatMessage {
+    return {
+      role: "user",
+      content: utt.text,
+      name: sanitizeSpeakerName(utt.speakerName ?? utt.speakerId),
+    };
+  }
+
   private reportError(err: unknown, context: string) {
     if (this.events.onError) {
       this.events.onError(err, context);
@@ -76,7 +98,7 @@ export class ZundamonSession {
       if (detectWakeWord(utt.text)) {
         await this.handleWake(utt);
       } else {
-        this.conversationLog.push({ role: "user", content: utt.text });
+        this.conversationLog.push(this.toUserMessage(utt));
       }
       return;
     }
@@ -93,7 +115,7 @@ export class ZundamonSession {
     this.events.onPrimaryResponsePlay(primaryPhrase);
 
     this.setState("AWAKENED");
-    this.conversationLog.push({ role: "user", content: utt.text });
+    this.conversationLog.push(this.toUserMessage(utt));
 
     this.startGraceTimer();
     this.startRound();
@@ -168,7 +190,7 @@ export class ZundamonSession {
       this.graceTimer = null;
     }
 
-    this.conversationLog.push({ role: "user", content: utt.text });
+    this.conversationLog.push(this.toUserMessage(utt));
 
     // 実APIでは judgeContinuation に数百ms〜数秒かかる。その間に
     // ラウンドが完走していると abortController は既に null になっており、

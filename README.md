@@ -54,6 +54,7 @@ gh release download asr-models -R k2-fsa/sherpa-onnx -p "silero_vad_v5.onnx"
 | `npm run discord:test` | 必要(Discord+TTS) | 少 | Discord接続・ボイスチャンネル参加・音声再生・テキスト報告の疎通確認 |
 | `npm run discord:receive-test` | 必要(Discord) | なし | ボイスチャンネルでの発話を受信しSTTで認識(要: 人間が実際に話す) |
 | `npm run test:judge-optimization` | 不要 | なし | ウェイクワードのみの発話でLLM判定がスキップされることを確認 |
+| `npm run test:multi-speaker` | 不要 | なし | 異なる話者の発言に別々のnameが付くことを確認 |
 
 ### 1. モックLLMでロジック検証（API課金なし）
 
@@ -191,6 +192,7 @@ src/
   memorySessionDemo.ts     短期記憶の圧縮+長期記憶の想起を実セッションで確認
   stt/
     sttEngine.ts            VAD(Silero)による発話区間検出+オフライン認識(ReazonSpeech)
+    multiSpeakerStt.ts       話者(speakerId)ごとに独立したSttEngineを管理
   sttTest.ts               STT単体の疎通テスト(同梱テスト音声+TTS閉ループ)
   sttStreamTest.ts          VAD+STTのストリーミング疑似投入テスト
   discordTest.ts            Discord接続・ボイスチャンネル参加・音声再生の疎通テスト
@@ -210,6 +212,7 @@ test/
   fakeTTSServer.ts        su-shiki互換の最小フェイクサーバ（異常系検証用）
   runTTSErrorTests.ts     SushikiTTSClientの異常系テスト
   testJudgeOptimization.ts 判定コスト最適化(ウェイクワードのみの発話でLLM省略)の検証
+  testMultiSpeaker.ts     複数話者の発言がnameで区別されることの検証
 ```
 
 ### APIキー無しで preflight / scenarios:real を試す

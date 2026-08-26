@@ -1,6 +1,8 @@
 export interface Utterance {
   text: string;
   speakerId: string;
+  /** 表示用の話者名（Discordのユーザー名等）。無ければspeakerIdを使う。 */
+  speakerName?: string;
   timestamp: number;
 }
 

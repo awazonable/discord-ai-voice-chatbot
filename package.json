@@ -22,6 +22,7 @@
     "test:fake": "tsx test/runAgainstFake.ts",
     "test:tts-fake": "tsx test/runTTSErrorTests.ts",
     "test:judge-optimization": "tsx test/testJudgeOptimization.ts",
+    "test:multi-speaker": "tsx test/testMultiSpeaker.ts",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [],

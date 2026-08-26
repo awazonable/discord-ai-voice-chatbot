@@ -1,6 +1,13 @@
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
+  /**
+   * 発話者を区別するための識別子（OpenAI APIのmessage.nameに対応）。
+   * 複数話者が同じ会話に参加する場合、role="user"だけでは誰の発言か
+   * LLMから見て区別が付かない。英数字・アンダースコア・ハイフンのみ
+   * （OpenAI APIの制約）。
+   */
+  name?: string;
 }
 
 export interface StreamToken {

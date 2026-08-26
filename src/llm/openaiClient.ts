@@ -51,6 +51,7 @@ export class OpenAILLMClient implements LLMClient {
     let workingMessages: OAIMessage[] = messages.map((m) => ({
       role: m.role,
       content: m.content,
+      ...(m.name ? { name: m.name } : {}),
     }));
 
     // ツール呼び出しが続く限りループする（検索してから保存、等の多段呼び出しに対応）。

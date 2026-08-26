@@ -8,12 +8,13 @@ import {
 } from "@discordjs/voice";
 import prism from "prism-media";
 import { loadConfig, MissingDiscordTokenError } from "./config.js";
-import { SttEngine } from "./stt/sttEngine.js";
+import { MultiSpeakerStt } from "./stt/multiSpeakerStt.js";
 
 /**
  * Discordボイスチャンネルからの音声受信 + STT疎通テスト。
  * ボイスチャンネルに参加し、話しているユーザーのOpusストリームを購読して
- * PCMにデコード、SttEngineに流し込んで認識結果を表示する。
+ * PCMにデコード、話者ごとのSttEngine(MultiSpeakerStt)に流し込んで
+ * 認識結果を表示する。複数人が同時に話しても話者ごとに独立して認識される。
  *
  * 実際に人間がボイスチャンネルで話す必要があるため、自動化できない
  * （TTS再生のような自己完結テストにはできない）。
@@ -47,15 +48,7 @@ async function main() {
   console.log("[1] STTエンジン初期化中...");
   const modelDir = `${cfg.modelsDir}/sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01`;
   const vadModelPath = `${cfg.modelsDir}/silero_vad_v5.onnx`;
-  const engines = new Map<string, SttEngine>();
-  const getEngine = (userId: string) => {
-    let e = engines.get(userId);
-    if (!e) {
-      e = new SttEngine({ modelDir, vadModelPath });
-      engines.set(userId, e);
-    }
-    return e;
-  };
+  const stt = new MultiSpeakerStt({ modelDir, vadModelPath });
   console.log("  ✓ 初期化完了\n");
 
   console.log("[2] Discordにログイン中...");
@@ -110,7 +103,7 @@ async function main() {
       frameSize: 960,
     });
 
-    const engine = getEngine(userId);
+    const engine = stt.getEngine(userId);
     opusStream.pipe(decoder);
     decoder.on("data", (pcmChunk: Buffer) => {
       const mono = toMonoFloat32(pcmChunk);
@@ -125,6 +118,9 @@ async function main() {
       for (const r of results) {
         console.log(`  >>> [${user?.tag ?? userId}] "${r.text}" (flush)`);
       }
+      // 発話セッションごとにエンジンを作り直す(VAD/バッファの状態を
+      // 次回に持ち越さない。circular-bufferのネイティブエラー対策)。
+      stt.resetSpeaker(userId);
       console.log(`  🔇 発話終了: ${user?.tag ?? userId}`);
     });
     decoder.on("error", (err) => {
