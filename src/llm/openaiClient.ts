@@ -15,6 +15,8 @@ export interface OpenAIClientOptions {
   baseURL?: string;
   /** 判定呼び出しのタイムアウト。猶予ウィンドウを超えて待つ意味はないため短め。 */
   judgeTimeoutMs?: number;
+  /** 要約呼び出しのタイムアウト。会話ログの圧縮には判定より長い猶予を与える。 */
+  summaryTimeoutMs?: number;
 }
 
 /**
@@ -26,12 +28,14 @@ export class OpenAILLMClient implements LLMClient {
   private mainModel: string;
   private judgeModel: string;
   private judgeTimeoutMs: number;
+  private summaryTimeoutMs: number;
 
   constructor(opts: OpenAIClientOptions) {
     this.client = new OpenAI({ apiKey: opts.apiKey, baseURL: opts.baseURL });
     this.mainModel = opts.mainModel;
     this.judgeModel = opts.judgeModel;
     this.judgeTimeoutMs = opts.judgeTimeoutMs ?? 3000;
+    this.summaryTimeoutMs = opts.summaryTimeoutMs ?? 10000;
   }
 
   async *streamChat(
@@ -277,7 +281,7 @@ export class OpenAILLMClient implements LLMClient {
           messages: requestMessages,
           response_format: { type: "json_object" },
         },
-        { signal, timeout: this.judgeTimeoutMs }
+        { signal, timeout: this.summaryTimeoutMs }
       );
 
       const content = res.choices[0]?.message?.content ?? "{}";
