@@ -121,6 +121,16 @@ LLMに渡すトークンを4種類に整理し、それぞれ扱いを変える�
 
 ## 未確定・要検討事項（次のステップ）
 
+> **Core / Plugin 分離とエージェント開発基盤については、以下に分離した。**
+> - [`docs/architecture/core-plugin.md`](./architecture/core-plugin.md) — 改訂版アーキテクチャ（Core/Plugin 境界、二層 Plugin 構成、実装順序）
+> - [`docs/architecture/core-plugin-review.md`](./architecture/core-plugin-review.md) — 設計素案のレビュー結果
+> - [`docs/contracts/tool-plugin.md`](./contracts/tool-plugin.md) — Tool Plugin Contract（MCP 準拠）
+> - [`docs/decisions/`](./decisions/) — ADR
+> - [`docs/agent/`](./agent/) — エージェント向け Safety Rules とテスト戦略
+>
+> 特に下記 9番（Qdrant 実セッション検証）と 11番（MCP サーバー化）は、
+> Core/Plugin 移行の Phase 0 / Phase 2 に対応する。
+
 1. ~~STT〜呼びかけ検知〜LLM層の実配線~~ → 実装済み。
    `src/discordBot.ts`で`VoiceReceiverAdapter`から
    `ZundamonSession.onFinalUtterance`へ接続し、応答をDiscord再生キューへ渡す。
