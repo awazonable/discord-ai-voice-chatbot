@@ -1,7 +1,12 @@
-# ずんだもんボット PoC — ウェイクワード判定ロジック
+# ずんだもんボット
 
-音声認識(STT)・VOICEVOX・Discordはまだ繋がっていない、
-「ウェイクワード検知後のLLM呼び出しタイミング」だけを検証する最小構成。
+「ウェイクワード検知後のLLM呼び出しタイミング」の検証から始まったPoC。
+STT(sherpa-onnx)・TTS(VOICEVOX)・Discord(discord.js)・記憶(Qdrant)は
+それぞれ個別スクリプトで実際に動作することを確認済み（下記コマンド一覧）。
+`src/discordBot.ts`に、それらを`ZundamonSession`本体へ配線した
+Discordボットの本番エントリポイントを実装している。2026-08-27に開発用
+ボイスチャンネルで一人の話者による実環境の一気通貫動作を確認済み
+（詳細は[`docs/overall-design.md`](docs/overall-design.md)参照）。
 
 ## セットアップ
 
@@ -10,6 +15,71 @@ npm install
 cp .env.example .env
 # .env に OPENAI_API_KEY を設定
 ```
+
+長期記憶(`memory:*`)を使う場合はローカルQdrantも起動しておくこと
+（Windowsの場合、[GitHub Releases](https://github.com/qdrant/qdrant/releases)
+の`qdrant-x86_64-pc-windows-msvc.zip`を展開して`qdrant.exe`を実行するか、
+`docker run -p 6333:6333 qdrant/qdrant`）。既定では`http://127.0.0.1:6333`
+に接続する。
+
+STT(`stt:*`)を使う場合はモデルを`.models/`に置く（gitignore済み、初回のみ）:
+
+```bash
+mkdir -p .models && cd .models
+gh release download asr-models -R k2-fsa/sherpa-onnx \
+  -p "sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01.tar.bz2" -O reazonspeech.tar.bz2
+tar -xjf reazonspeech.tar.bz2 && rm reazonspeech.tar.bz2
+gh release download asr-models -R k2-fsa/sherpa-onnx -p "silero_vad_v5.onnx"
+```
+
+### Discordボットを起動する前提
+
+`npm run discord:bot` は、次の準備が済んだ開発環境で実行する:
+
+- ローカルVOICEVOX（`VOICEVOX_BASE_URL`）または利用可能なsu-shiki API
+- 上記のSTTモデル一式（ReazonSpeech Zipformer + Silero VAD）
+- Discord Developer Portalで作成したBotと、対象サーバー・ボイスチャンネルへの権限
+- `.env`の`DISCORD_BOT_TOKEN`、`DEV_GUILD_ID`、`DEV_CHANNEL_ID_VOICE`
+- Discord音声再生に必要な`ffmpeg` 9.0.1をPATHに追加（導入済み）
+- 長期記憶を使う場合はQdrant（任意）。Botは`save_memory`/`search_memory`の
+  memory toolsを設定済みなので、これらを使うときだけQdrantを起動する
+
+ウェイクワードは`.env`で変更できます。既定のcanonicalは`ずんだもん,ずんちゃん`です。
+`WAKE_WORDS`をカンマ区切りで指定すると
+canonical候補を複数登録でき、必要なら`WAKE_WORD_WEAK_ALIASES`、
+`WAKE_WORD_AMBIGUOUS_ALIASES`、`WAKE_ATTENTION_CUES`も指定できます。
+canonicalはUnicode文字数5文字以上が必要で、短い設定値は起動時に設定エラーになります。
+`WAKE_WORDS`自体が未指定のときは現在の既定語彙を使います。`WAKE_WORDS`で名前を
+置き換えた場合、キャラクター固有の別名は引き継がれず、別名用の環境変数で明示した
+ものだけが有効になります。5文字未満の曖昧候補は注意キュー付きの
+場合だけ受理され、`ずんだ餅`や`ずんだもち`のような食べ物語はブロックされます。
+
+```bash
+npm run discord:bot
+```
+
+STTの確定した文字起こしをデバッグログへ出力する場合は、`--debug`を付けて起動する:
+
+```bash
+npm run discord:bot -- --debug
+```
+
+デバッグログには参加者の表示名・DiscordユーザーID・文字起こし本文が含まれる。
+文字起こしには参加者の発話が含まれる可能性があるため、ログの取り扱いに注意すること。
+
+`DEV_CHANNEL_ID_TEXT`と`DEV_USER_ID_ADMIN`は任意設定。個別の疎通・診断には
+`discord:test`、`discord:receive-test`、`stt:stream-test`、
+`test:discord-playback`など、下記の個別スクリプトを引き続き利用できる。
+
+2026-08-27の実環境テストでは、本番ボットが開発用ボイスチャンネルに参加し、
+約30秒の日本語会話ループでSTT→ウェイク検知→OpenAI LLM→ローカルVOICEVOX→
+ffmpeg/Discord再生の一気通貫動作を確認した。長いSTTセグメントの途中にある正式語も
+検出し、短縮・同音誤認識は同じ話者の`あっそうだ`等を補助条件として回復する。
+修正後の約6分の安定試験はループ10/10（正式語6/6、補助回復4/4）、追加の手動
+呼びかけ2/2で応答した。5文字未満の`んだもん`単独発話には反応せず、再生・
+circular-buffer・要約タイムアウトのエラーも発生しなかった。複数人の同時発話と、
+停止中だったQdrantを使うメモリ機能は未検証。なお、ウェイク前の雑談が会話ログへ
+入り応答内容に混ざるため、雑談コンテキストの保持方針は今後の調整項目。
 
 ## 実行方法
 
@@ -25,6 +95,26 @@ cp .env.example .env
 | `npm run preflight` | 必要 | ごく少 | 認証・モデル名の実在確認・レイテンシ実測 |
 | `npm run scenarios:real` | 必要 | 少 | 実APIで4シナリオを自動実行 |
 | `npm run cli` | 必要 | 少 | 実APIで対話的に検証 |
+| `npm run toolcall` | 必要 | ごく少 | ツールコール(function calling)が動くかの単発疎通確認 |
+| `npm run tts:test` | 必要(SUSHIKI_API_KEY) | 少 | 音声合成(su-shiki VOICEVOX API)の単発疎通確認。output/にwavを保存 |
+| `npm run tts:playback-demo` | 必要(両方) | 中 | onSentenceReadyを実際の合成+スピーカー再生につなぎ込んで実測 |
+| `npm run test:tts-fake` | 不要 | なし | TTSクライアントの異常系(HTTP500・不正JSON等)をフェイクサーバで検証 |
+| `npm run tts:overhead-test` | 必要(SUSHIKI_API_KEY) | 少(合成1回のみ) | 再生方式ごとのオーバーヘッドをWAV実長と比較 |
+| `npm run memory:test` | 必要+Qdrant | ごく少 | 長期記憶(Qdrant)の保存・意味検索の単発疎通確認 |
+| `npm run memory:toolcall-test` | 必要+Qdrant | 少 | save_memory/search_memoryをLLMのツール呼び出し経由で実行 |
+| `npm run memory:session-demo` | 必要+Qdrant | 中 | 短期記憶の自動圧縮+長期記憶の想起を実セッションで確認 |
+| `npm run stt:test` | 不要 | なし | STT(ReazonSpeech Zipformer)の疎通確認。同梱テスト音声+TTS閉ループ |
+| `npm run stt:stream-test` | 必要(TTS用) | ごく少 | VAD+STTのストリーミング疑似投入テスト |
+| `npm run discord:bot` | 必要(Discord・VOICEVOX・STT・ffmpeg) | 中 | STT・セッション・TTSを接続した本番エントリポイント |
+| `npm run discord:test` | 必要(Discord+TTS) | 少 | Discord接続・ボイスチャンネル参加・音声再生・テキスト報告の疎通確認 |
+| `npm run discord:receive-test` | 必要(Discord) | なし | ボイスチャンネルでの発話を受信しSTTで認識(要: 人間が実際に話す) |
+| `npm run discord:capture-test` | 必要(Discord) | なし | Discord受信・Opusデコードのプライバシー安全な診断。音声は保存せず、duration/peak/RMSを報告 |
+| `npm run test:discord-playback` | 不要 | なし | Discord再生キューの順序・中断・切断復旧をフェイク接続で検証 |
+| `npm run test:judge-optimization` | 不要 | なし | ウェイクワードのみの発話でLLM判定がスキップされることを確認 |
+| `npm run test:multi-speaker` | 不要 | なし | 異なる話者の発言に別々のnameが付くことを確認 |
+| `npm run test:wakeword` | 不要 | なし | ウェイクワード検出が口語表現「〜んだもん」と衝突しないことを確認 |
+| `npm run test:session-wakeword` | 不要 | なし | 同一話者の注意キューによる誤認識回復と設定注入を確認 |
+| `npm run test:session-shutdown` | 不要 | なし | セッション終了時の後処理を検証 |
 
 ### 1. モックLLMでロジック検証（API課金なし）
 
@@ -132,20 +222,65 @@ src/
     errors.ts           中断エラーの判定（SDKごとの差異を吸収）
     mockClient.ts       APIを叩かないモック実装（レイテンシ模擬つき）
     openaiClient.ts     OpenAI(互換)実装
+    callLogger.ts        LLM呼び出し（本体・判定）の入出力を logs/llm-calls.jsonl
+                          に1行JSONで記録する仮ロガー
   session/
     types.ts            Utterance, SessionState, SessionEvents の型
     wakeword.ts         ウェイクワード検知
     sentenceBuffer.ts   文単位ストリームバッファ（グレースフル中断の要）
+    audioClock.ts        テキスト生成と音声再生のズレを追跡する仮クロック
+                          （0.1秒/文字の概算。VOICEVOX未接続の間のプレースホルダー）
     zundamonSession.ts  セッション管理コアロジック（本体）
+  tts/
+    types.ts             TTSクライアントの抽象インターフェース
+    sushikiClient.ts      su-shiki(Web版VOICEVOX API)実装
+    localVoicevoxClient.ts ローカルVOICEVOXエンジン(REST API)実装
+    createTTSClient.ts     .envの設定からどちらを使うか選ぶ
+                          (VOICEVOX_BASE_URL優先、無ければsu-shiki)
+    playback.ts           WAVをホストスピーカーで再生(Windows専用)。
+                          PersistentPowerShellPlayer(プロセス使い回し、既定)と
+                          playWavFile(毎回新規起動、単発確認用)の2実装
+    playbackQueue.ts       onSentenceReadyから渡された文を順番に合成→再生する実キュー
+    wav.ts                 WAVヘッダから実際の音声長(ms)を読み取る
+  memory/
+    embeddings.ts         OpenAI埋め込みAPIのラッパー
+    longTermMemory.ts      Qdrant(ベクトルDB)への保存・検索
+    memoryTools.ts          save_memory/search_memoryのツール定義
+    shortTermMemory.ts      短期記憶(要約+重要な事実)のデータ保持・描画
+  memoryTest.ts            長期記憶(Qdrant)単体の疎通テスト
+  memoryToolCallTest.ts    save_memory/search_memoryをツール呼び出しで検証
+  memorySessionDemo.ts     短期記憶の圧縮+長期記憶の想起を実セッションで確認
+  stt/
+    sttEngine.ts            VAD(Silero)による発話区間検出+オフライン認識(ReazonSpeech)
+    multiSpeakerStt.ts       話者(speakerId)ごとに独立したSttEngineを管理
+  sttTest.ts               STT単体の疎通テスト(同梱テスト音声+TTS閉ループ)
+  sttStreamTest.ts          VAD+STTのストリーミング疑似投入テスト
+  discordBot.ts             STT・セッション・TTSを接続したDiscord Bot本体
+  discord/
+    voiceReceiver.ts        Discord音声受信→話者別STTアダプター
+    discordPlaybackQueue.ts Discord向け音声再生キュー
+  discordTest.ts            Discord接続・ボイスチャンネル参加・音声再生の疎通テスト
+  discordReceiveTest.ts     Discordボイスチャンネルの音声受信+STT疎通テスト
+  discordCaptureTest.ts     Discord受信・Opusデコードのプライバシー安全な診断（音声は保存せずduration/peak/RMSを報告）
   scenarios.ts          モックLLMでの自動シナリオテスト
   scenarioRunner.ts     シナリオ定義と実行（real / fake で共用）
   realScenarios.ts      実APIでのシナリオ実行エントリ
   preflight.ts          実API疎通・モデル名検証・レイテンシ実測
   cli.ts                実APIでの対話的CLI検証
+  ttsTest.ts              音声合成の単発疎通テスト（話者一覧取得+短文合成）
+  ttsPlaybackDemo.ts       onSentenceReadyを実際の再生につなぎ込むデモ
+  ttsOverheadTest.ts       再生方式ごとのオーバーヘッド比較(WAV実長との突き合わせ)
 test/
   fakeOpenAIServer.ts   OpenAI互換の最小フェイクサーバ（SSE・中断検知つき）
   runAgainstFake.ts     フェイクサーバに対する統合テスト
   serveFake.ts          フェイクサーバの単体起動（preflightの動作確認用）
+  fakeTTSServer.ts        su-shiki互換の最小フェイクサーバ（異常系検証用）
+  runTTSErrorTests.ts     SushikiTTSClientの異常系テスト
+  testJudgeOptimization.ts 判定コスト最適化(ウェイクワードのみの発話でLLM省略)の検証
+  testMultiSpeaker.ts     複数話者の発言がnameで区別されることの検証
+  testWakeword.ts         ウェイクワード検出の位置限定マッチの検証
+  discordPlaybackQueue.test.ts Discord再生キューの単体テスト
+  sessionShutdown.test.ts セッション終了時の後処理の回帰テスト
 ```
 
 ### APIキー無しで preflight / scenarios:real を試す
@@ -156,27 +291,29 @@ OPENAI_API_KEY=dummy OPENAI_BASE_URL=http://127.0.0.1:8787/v1 \
   MAIN_MODEL=fake-main JUDGE_MODEL=fake-judge npm run preflight
 ```
 
-## 引き継ぎ
+## 現状・次のステップ
 
-実APIでの実測はまだ未達（テスト作成環境にAPIキーが無かったため）。
-現状・再開手順・実測後に決めたい設計判断は
-[`docs/openai-test-handoff.md`](docs/openai-test-handoff.md) に集約してある。
+プロジェクト全体の設計・現在の進捗・未対応事項は
+[`docs/overall-design.md`](docs/overall-design.md)（STTの詳細は
+[`docs/stt-design.md`](docs/stt-design.md)）に集約してある。
+実装の過程で実測して分かったこと・判断の経緯は
+[`docs/archive/openai-test-handoff.md`](docs/archive/openai-test-handoff.md)
+に時系列で残っている（完了済みの作業ログ）。
 
-## 未実装・次のステップ
+## LLM呼び出しログ
 
-- STT層（sherpa-onnx-node）との接続 — 現状はキーボード入力で代用
-- VOICEVOX層との接続 — `onSentenceReady` イベントを実際の音声合成キューに
-  つなぎ込む
-- discord.js（`@discordjs/voice`）との接続 — ボイスチャンネル音声受信・
-  ストリーム再生
-- モデル名の確定（`npm run preflight` で実在確認すること）
-- 話者複数対応: 現状 `ZundamonSession` は1話者分の想定。実運用では
-  話者(speakerId)ごとにセッションを分けるか、共有会話ログの扱いを別途設計する
-- 判定コストの最適化: `judgeContinuation` は追加発話のたびにAPI呼び出しが
-  発生する。呼びかけ語のみの単純なケースはローカルヒューリスティックで
-  先に弾く等の最適化余地あり
-- **`GRACE_WINDOW_MS` が実質機能していない**: 猶予タイマーは張られるものの、
-  追加発話は PROCESSING 中ならいつでも判定にかけられており、
-  2秒の窓が何かをゲートしているわけではない。意図どおりに窓で絞るのか、
-  それとも「応答中はいつでも割り込める」を正とするのか要決定（挙動を
-  変える判断になるため本PoCでは既存挙動のまま据え置いている）。
+実API/フェイクサーバ問わず、`OpenAILLMClient` を使う実行は
+`logs/llm-calls.jsonl`（gitignore済み）に本体モデル・判定モデルそれぞれの
+入力（messages）と出力（応答テキスト・判定結果）を1呼び出し1行のJSONで
+追記する。何を送って何が返ってきたかを後から確認したいとき用。
+
+```bash
+# 直近の判定呼び出しだけ見る例
+grep '"kind":"judge"' logs/llm-calls.jsonl | tail -5
+```
+
+## 未対応事項
+
+最新の一覧は [`docs/overall-design.md`](docs/overall-design.md) の
+「未確定・要検討事項」を参照（このREADMEとの二重管理で内容が
+ズレるのを防ぐため、詳細はそちらに一本化している）。

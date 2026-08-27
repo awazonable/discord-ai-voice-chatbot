@@ -1,4 +1,9 @@
 import "dotenv/config";
+import {
+  DEFAULT_WAKE_WORD_CONFIG,
+  validateWakeWordConfig,
+  type WakeWordConfig,
+} from "./session/wakeword.js";
 
 /**
  * モデル名について:
@@ -12,11 +17,90 @@ import "dotenv/config";
 export const DEFAULT_MAIN_MODEL = "gpt-5.6-sol";
 export const DEFAULT_JUDGE_MODEL = "gpt-5.6-luna";
 
+type Environment = Readonly<Record<string, string | undefined>>;
+
+function parseCommaSeparated(value: string | undefined): string[] | undefined {
+  if (!value?.trim()) return undefined;
+  const values = [
+    ...new Set(value.split(",").map((item) => item.trim()).filter(Boolean)),
+  ];
+  return values.length > 0 ? values : undefined;
+}
+
+/**
+ * .envからウェイクワード語彙を読み込む。
+ *
+ * WAKE_WORDS自体が未指定なら、既定の名前とそのASR別名をまとめて使う。
+ * WAKE_WORDSを明示して名前を置き換えた場合は、既定キャラクター固有の
+ * ASR別名が残らないよう、weak/ambiguousは明示された値だけを使う。
+ */
+export function loadWakeWordConfig(env: Environment = process.env): WakeWordConfig {
+  const configuredCanonical = parseCommaSeparated(env.WAKE_WORDS);
+  const useDefaultVocabulary = configuredCanonical === undefined;
+  const config: WakeWordConfig = {
+    ...DEFAULT_WAKE_WORD_CONFIG,
+    canonical: configuredCanonical ?? DEFAULT_WAKE_WORD_CONFIG.canonical,
+    weak:
+      parseCommaSeparated(env.WAKE_WORD_WEAK_ALIASES) ??
+      (useDefaultVocabulary ? DEFAULT_WAKE_WORD_CONFIG.weak : []),
+    ambiguous:
+      parseCommaSeparated(env.WAKE_WORD_AMBIGUOUS_ALIASES) ??
+      (useDefaultVocabulary ? DEFAULT_WAKE_WORD_CONFIG.ambiguous : []),
+    attentionCues:
+      parseCommaSeparated(env.WAKE_ATTENTION_CUES) ?? DEFAULT_WAKE_WORD_CONFIG.attentionCues,
+  };
+  validateWakeWordConfig(config);
+  return config;
+}
+
 export interface AppConfig {
   apiKey: string;
   mainModel: string;
   judgeModel: string;
   baseURL?: string;
+  /** su-shiki.com が提供するWeb版VOICEVOX APIのキー。音声合成の検証時のみ必要。 */
+  sushikiApiKey?: string;
+  /**
+   * ローカルVOICEVOXエンジンのベースURL。設定されていれば
+   * su-shiki(Web API)より優先してこちらを使う（ポイント消費・レート制限が
+   * 無く開発中の反復に向くため）。
+   *   例: VOICEVOX_BASE_URL=http://127.0.0.1:50021
+   */
+  voicevoxBaseURL?: string;
+  /** ローカルQdrantのURL。長期記憶(ベクトルDB)に使う。既定はローカル標準ポート。 */
+  qdrantURL: string;
+  /** 長期記憶のベクトル化に使う埋め込みモデル。 */
+  embeddingModel: string;
+  /** sherpa-onnx用モデル一式を置くディレクトリ。既定は .models/ 。 */
+  modelsDir: string;
+  wakeWordConfig: WakeWordConfig;
+  discord?: {
+    botToken: string;
+    devGuildId?: string;
+    devChannelIdText?: string;
+    devChannelIdVoice?: string;
+    devUserIdAdmin?: string;
+  };
+}
+
+export class MissingDiscordTokenError extends Error {
+  constructor() {
+    super(
+      "環境変数 DISCORD_BOT_TOKEN が設定されていません。\n" +
+        "  Discord Developer Portal でBotを作成し、.env に設定してください。"
+    );
+    this.name = "MissingDiscordTokenError";
+  }
+}
+
+export class MissingSushikiApiKeyError extends Error {
+  constructor() {
+    super(
+      "環境変数 SUSHIKI_API_KEY が設定されていません。\n" +
+        "  https://su-shiki.com/api/ でキーを取得し .env に設定してください。"
+    );
+    this.name = "MissingSushikiApiKeyError";
+  }
 }
 
 export class MissingApiKeyError extends Error {
@@ -40,6 +124,21 @@ export function loadConfig(): AppConfig {
     mainModel: process.env.MAIN_MODEL ?? DEFAULT_MAIN_MODEL,
     judgeModel: process.env.JUDGE_MODEL ?? DEFAULT_JUDGE_MODEL,
     baseURL: process.env.OPENAI_BASE_URL || undefined,
+    sushikiApiKey: process.env.SUSHIKI_API_KEY || undefined,
+    voicevoxBaseURL: process.env.VOICEVOX_BASE_URL || undefined,
+    qdrantURL: process.env.QDRANT_URL || "http://127.0.0.1:6333",
+    embeddingModel: process.env.EMBEDDING_MODEL || "text-embedding-3-small",
+    modelsDir: process.env.MODELS_DIR || ".models",
+    wakeWordConfig: loadWakeWordConfig(),
+    discord: process.env.DISCORD_BOT_TOKEN
+      ? {
+          botToken: process.env.DISCORD_BOT_TOKEN,
+          devGuildId: process.env.DEV_GUILD_ID || undefined,
+          devChannelIdText: process.env.DEV_CHANNEL_ID_TEXT || undefined,
+          devChannelIdVoice: process.env.DEV_CHANNEL_ID_VOICE || undefined,
+          devUserIdAdmin: process.env.DEV_USER_ID_ADMIN || undefined,
+        }
+      : undefined,
   };
 }
 
@@ -50,5 +149,6 @@ export function describeConfig(cfg: AppConfig): string {
     `  main model : ${cfg.mainModel}`,
     `  judge model: ${cfg.judgeModel}`,
     `  api key    : ${cfg.apiKey.slice(0, 7)}...(${cfg.apiKey.length} chars)`,
+    `  wake words : ${cfg.wakeWordConfig.canonical.join(", ")}`,
   ].join("\n");
 }
