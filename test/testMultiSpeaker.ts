@@ -74,10 +74,24 @@ async function main() {
   const aliceMsg = lastMessages.find((m) => m.content === "ずんだもん、こんにちは");
   const bobMsg = lastMessages.find((m) => m.content === "ずんだもん、はじめまして");
 
+  console.log("\n[3] 日本語表示名の話者が起動発話（異なるDiscord ID）");
+  await session.onFinalUtterance(utt("ずんだもん、元気？", "123456789012345678", "太郎"));
+  await waitForIdle(session);
+  await session.onFinalUtterance(utt("ずんだもん、質問です", "987654321098765432", "花子"));
+  await waitForIdle(session);
+
+  const japaneseMessages = llm.capturedMessages.at(-1)!;
+  const taroMsg = japaneseMessages.find((m) => m.content === "ずんだもん、元気？");
+  const hanakoMsg = japaneseMessages.find((m) => m.content === "ずんだもん、質問です");
+  const validMessageName = (name: string | undefined) =>
+    !!name && name.length <= 64 && /^[A-Za-z0-9_-]+$/.test(name);
+
   const checks = [
     ["Aliceの発言にname=Aliceが付いている", aliceMsg?.name === "Alice"],
     ["Bobの発言にname=Bobが付いている", bobMsg?.name === "Bob"],
     ["両者のnameが異なる(話者を区別できている)", aliceMsg?.name !== bobMsg?.name],
+    ["日本語表示名のnameが有効な形式", validMessageName(taroMsg?.name) && validMessageName(hanakoMsg?.name)],
+    ["異なるDiscord IDから異なるnameが生成される", taroMsg?.name !== hanakoMsg?.name],
   ] as const;
 
   let allOk = true;

@@ -1,7 +1,12 @@
 import type { LLMClient, ChatMessage, ToolConfig } from "../llm/types.js";
 import { isAbortError } from "../llm/errors.js";
 import type { SessionEvents, SessionState, Utterance } from "./types.js";
-import { detectWakeWord, stripWakeWord } from "./wakeword.js";
+import {
+  DEFAULT_WAKE_WORD_CONFIG,
+  detectWakeWord,
+  stripWakeWord,
+  type WakeWordConfig,
+} from "./wakeword.js";
 import { SentenceStreamBuffer } from "./sentenceBuffer.js";
 import { AudioClock } from "./audioClock.js";
 import { ShortTermMemory } from "../memory/shortTermMemory.js";
@@ -18,8 +23,34 @@ const KEEP_RECENT_MESSAGES = 6;
  * Discordの表示名は絵文字や記号を含みうるため、そのままでは使えない。
  */
 function sanitizeSpeakerName(raw: string): string {
-  const cleaned = raw.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64);
-  return cleaned || "speaker";
+  return raw.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64);
+}
+
+function speakerIdFallback(speakerId: string): string {
+  const safeId = speakerId.replace(/[^a-zA-Z0-9_-]/g, "");
+  if (safeId) return `speaker_${safeId}`.slice(0, 64);
+
+  // Keep arbitrary test/non-Discord IDs distinguishable without putting
+  // unsupported characters into message.name.
+  let hash = 2166136261;
+  for (let i = 0; i < speakerId.length; i++) {
+    hash ^= speakerId.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `speaker_${(hash >>> 0).toString(16)}`.slice(0, 64);
+}
+
+export interface ZundamonSessionOptions {
+  /** 長期記憶(save_memory/search_memory)等、LLMに渡すツール定義。 */
+  tools?: ToolConfig;
+  /** 省略時は現在のずんだもん互換設定を使う。 */
+  wakeWordConfig?: WakeWordConfig;
+}
+
+function isToolConfig(
+  value: ToolConfig | ZundamonSessionOptions | undefined,
+): value is ToolConfig {
+  return !!value && "definitions" in value && "onCall" in value;
 }
 
 /**
@@ -39,6 +70,10 @@ function sanitizeSpeakerName(raw: string): string {
 export class ZundamonSession {
   private state: SessionState = "IDLE";
   private conversationLog: ChatMessage[] = [];
+  private previousFinalizedTextBySpeaker = new Map<string, string>();
+  private wakeWordConfig: WakeWordConfig;
+  private speakerNames = new Map<string, string>();
+  private usedSpeakerNames = new Set<string>();
   private abortController: AbortController | null = null;
   private graceTimer: NodeJS.Timeout | null = null;
   private sentenceBuffer = new SentenceStreamBuffer();
@@ -51,6 +86,9 @@ export class ZundamonSession {
   private audioClock = new AudioClock();
   private accumulatedResponse = "";
   private pendingFollowup: string | null = null;
+  private closed = false;
+  private judgeControllers = new Set<AbortController>();
+  private compactionController: AbortController | null = null;
   /** 短期記憶: 直近の会話の要約+重要な事実。毎回inputに差し込む。 */
   private shortTermMemory = new ShortTermMemory();
   private compacting = false;
@@ -58,9 +96,19 @@ export class ZundamonSession {
   constructor(
     private llm: LLMClient,
     private events: SessionEvents,
-    /** 長期記憶(save_memory/search_memory)等、LLMに渡すツール定義。省略可。 */
-    private tools?: ToolConfig
-  ) {}
+    /** 既存のToolConfig形式、またはツールとウェイクワードの設定。 */
+    toolsOrOptions?: ToolConfig | ZundamonSessionOptions,
+  ) {
+    if (isToolConfig(toolsOrOptions)) {
+      this.tools = toolsOrOptions;
+      this.wakeWordConfig = DEFAULT_WAKE_WORD_CONFIG;
+    } else {
+      this.tools = toolsOrOptions?.tools;
+      this.wakeWordConfig = toolsOrOptions?.wakeWordConfig ?? DEFAULT_WAKE_WORD_CONFIG;
+    }
+  }
+
+  private tools?: ToolConfig;
 
   private setState(s: SessionState) {
     this.state = s;
@@ -71,16 +119,54 @@ export class ZundamonSession {
     return this.state;
   }
 
+  /** セッションを再開不能な状態にして、進行中の処理を中断する。 */
+  shutdown(): void {
+    if (this.closed) return;
+    this.closed = true;
+
+    if (this.graceTimer) {
+      clearTimeout(this.graceTimer);
+      this.graceTimer = null;
+    }
+    this.abortController?.abort();
+    this.abortController = null;
+    for (const controller of this.judgeControllers) controller.abort();
+    this.judgeControllers.clear();
+    this.compactionController?.abort();
+    this.compactionController = null;
+    this.pendingFollowup = null;
+    this.sentenceBuffer = new SentenceStreamBuffer();
+    this.setState("IDLE");
+  }
+
   /**
    * 発話を会話ログ用のメッセージに変換する。話者名(name)を載せることで、
    * 複数話者が同じ会話に参加していてもLLMが「誰の発言か」を区別できる
    * ようにする（roleは全員"user"になるため、それだけでは区別が付かない）。
    */
   private toUserMessage(utt: Utterance): ChatMessage {
+    let name = this.speakerNames.get(utt.speakerId);
+    if (!name) {
+      const readableName = sanitizeSpeakerName(utt.speakerName ?? "");
+      name = readableName && !this.usedSpeakerNames.has(readableName)
+        ? readableName
+        : speakerIdFallback(utt.speakerId);
+
+      let suffix = 2;
+      const baseName = name;
+      while (this.usedSpeakerNames.has(name)) {
+        const suffixText = `_${suffix++}`;
+        name = `${baseName.slice(0, 64 - suffixText.length)}${suffixText}`;
+      }
+
+      this.speakerNames.set(utt.speakerId, name);
+      this.usedSpeakerNames.add(name);
+    }
+
     return {
       role: "user",
       content: utt.text,
-      name: sanitizeSpeakerName(utt.speakerName ?? utt.speakerId),
+      name,
     };
   }
 
@@ -94,8 +180,18 @@ export class ZundamonSession {
 
   /** VADのfinal確定テキストが来るたびに呼ばれる */
   async onFinalUtterance(utt: Utterance) {
+    if (this.closed) return;
+
+    // 検知より先に更新しないことが重要。現在の発話から見た「直前」を
+    // 同期的に確定してから、処理がawaitで並行しても話者ごとの順序を崩さない。
+    const previousUtterance = this.previousFinalizedTextBySpeaker.get(utt.speakerId);
+    this.previousFinalizedTextBySpeaker.set(utt.speakerId, utt.text);
+
     if (this.state === "IDLE") {
-      if (detectWakeWord(utt.text)) {
+      if (detectWakeWord(utt.text, {
+        previousUtterance,
+        config: this.wakeWordConfig,
+      })) {
         await this.handleWake(utt);
       } else {
         this.conversationLog.push(this.toUserMessage(utt));
@@ -104,12 +200,14 @@ export class ZundamonSession {
     }
 
     if (this.state === "AWAKENED" || this.state === "PROCESSING") {
-      await this.handleFollowup(utt);
+      await this.handleFollowup(utt, previousUtterance);
       return;
     }
   }
 
   private async handleWake(utt: Utterance) {
+    if (this.closed) return;
+
     const primaryPhrase =
       PRIMARY_RESPONSES[Math.floor(Math.random() * PRIMARY_RESPONSES.length)]!;
     this.events.onPrimaryResponsePlay(primaryPhrase);
@@ -127,8 +225,11 @@ export class ZundamonSession {
    * unhandled rejection になるので必ずここで捕まえる。
    */
   private startRound() {
+    if (this.closed) return;
+
     void this.runRound(this.conversationLog).catch((err) => {
       if (isAbortError(err)) return;
+      if (this.closed) return;
       this.reportError(err, "runRound");
       this.abortController = null;
       this.setState("IDLE");
@@ -142,12 +243,19 @@ export class ZundamonSession {
     }, GRACE_WINDOW_MS);
   }
 
-  private async handleFollowup(utt: Utterance) {
+  private async handleFollowup(utt: Utterance, previousUtterance?: string) {
+    if (this.closed) return;
+
     // 判定コスト最適化: ウェイクワードだけ(本題が空)の発話は、LLM判定に
     // かけるまでもなく「継続なし」で確定できる。呼びかけ語の言い直しや
     // マイク越しの誤検知など、実運用で頻出しうるケース。判定LLMの
     // 往復(実測で数百ms〜数秒)をまるごと省略できる。
-    if (stripWakeWord(utt.text).trim().length === 0) {
+    if (
+      stripWakeWord(utt.text, {
+        previousUtterance,
+        config: this.wakeWordConfig,
+      }).trim().length === 0
+    ) {
       if (this.events.onJudge) {
         this.events.onJudge(false, "呼びかけ語のみのためローカル判定(LLM未呼び出し)", utt.text);
       }
@@ -155,6 +263,7 @@ export class ZundamonSession {
     }
 
     const judgeController = new AbortController();
+    this.judgeControllers.add(judgeController);
 
     let isContinuation: boolean;
     let abandonsCurrent: boolean;
@@ -167,11 +276,14 @@ export class ZundamonSession {
           judgeController.signal
         ));
     } catch (err) {
+      this.judgeControllers.delete(judgeController);
       if (isAbortError(err)) return;
       // 判定が落ちても進行中の応答は壊さない。継続なしとして扱う。
       this.reportError(err, "judgeContinuation");
       return;
     }
+    this.judgeControllers.delete(judgeController);
+    if (this.closed) return;
 
     if (this.events.onJudge) {
       this.events.onJudge(isContinuation, reasoning, utt.text);
@@ -225,6 +337,7 @@ export class ZundamonSession {
   }
 
   private async runRound(messages: ChatMessage[]) {
+    if (this.closed) return;
     this.setState("PROCESSING");
     this.abortController = new AbortController();
     this.sentenceBuffer = new SentenceStreamBuffer();
@@ -261,10 +374,12 @@ export class ZundamonSession {
         signal,
         this.tools
       )) {
+        if (this.closed) return;
         this.accumulatedResponse += token.text;
 
         const completedSentences = this.sentenceBuffer.push(token.text);
         for (const sentence of completedSentences) {
+          if (this.closed) return;
           this.audioClock.enqueue(sentence);
           this.events.onSentenceReady(sentence);
 
@@ -277,8 +392,10 @@ export class ZundamonSession {
       }
 
       if (!interruptedGracefully) {
+        if (this.closed) return;
         const remaining = this.sentenceBuffer.flush();
         for (const sentence of remaining) {
+          if (this.closed) return;
           this.audioClock.enqueue(sentence);
           this.events.onSentenceReady(sentence);
         }
@@ -307,6 +424,7 @@ export class ZundamonSession {
       }
 
       const followup = this.pendingFollowup;
+      if (this.closed) return;
       if (followup) {
         this.startRound();
       } else {
@@ -316,6 +434,7 @@ export class ZundamonSession {
     }
 
     this.abortController = null;
+    if (this.closed) return;
     this.conversationLog.push({
       role: "assistant",
       content: this.accumulatedResponse,
@@ -336,7 +455,7 @@ export class ZundamonSession {
    * 末尾への追記とは競合しない（同時に2つ走らないようcompactingで防ぐ）。
    */
   private async compactMemory() {
-    if (this.compacting) return;
+    if (this.compacting || this.closed) return;
     this.compacting = true;
     try {
       const cutoff = this.conversationLog.length - KEEP_RECENT_MESSAGES;
@@ -344,6 +463,7 @@ export class ZundamonSession {
       if (toSummarize.length === 0) return;
 
       const ctrl = new AbortController();
+      this.compactionController = ctrl;
       const { summary, facts } = await this.llm.summarize(
         toSummarize,
         this.shortTermMemory.getSummary(),
@@ -356,12 +476,15 @@ export class ZundamonSession {
       // 間に起きていても影響しない（前方だけを削るため）。
       this.conversationLog = this.conversationLog.slice(toSummarize.length);
 
+      if (this.closed) return;
       this.events.onMemoryCompacted?.(summary, facts);
     } catch (err) {
       // 圧縮に失敗しても会話ログはそのまま残るので、次ラウンド以降も
       // 生ログとして機能し続ける（劣化はするが会話は継続できる）。
+      if (this.closed) return;
       this.reportError(err, "compactMemory");
     } finally {
+      this.compactionController = null;
       this.compacting = false;
     }
   }

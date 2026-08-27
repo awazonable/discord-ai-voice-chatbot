@@ -1,4 +1,9 @@
 import "dotenv/config";
+import {
+  DEFAULT_WAKE_WORD_CONFIG,
+  validateWakeWordConfig,
+  type WakeWordConfig,
+} from "./session/wakeword.js";
 
 /**
  * モデル名について:
@@ -11,6 +16,42 @@ import "dotenv/config";
  */
 export const DEFAULT_MAIN_MODEL = "gpt-5.6-sol";
 export const DEFAULT_JUDGE_MODEL = "gpt-5.6-luna";
+
+type Environment = Readonly<Record<string, string | undefined>>;
+
+function parseCommaSeparated(value: string | undefined): string[] | undefined {
+  if (!value?.trim()) return undefined;
+  const values = [
+    ...new Set(value.split(",").map((item) => item.trim()).filter(Boolean)),
+  ];
+  return values.length > 0 ? values : undefined;
+}
+
+/**
+ * .envからウェイクワード語彙を読み込む。
+ *
+ * WAKE_WORDS自体が未指定なら、既定の名前とそのASR別名をまとめて使う。
+ * WAKE_WORDSを明示して名前を置き換えた場合は、既定キャラクター固有の
+ * ASR別名が残らないよう、weak/ambiguousは明示された値だけを使う。
+ */
+export function loadWakeWordConfig(env: Environment = process.env): WakeWordConfig {
+  const configuredCanonical = parseCommaSeparated(env.WAKE_WORDS);
+  const useDefaultVocabulary = configuredCanonical === undefined;
+  const config: WakeWordConfig = {
+    ...DEFAULT_WAKE_WORD_CONFIG,
+    canonical: configuredCanonical ?? DEFAULT_WAKE_WORD_CONFIG.canonical,
+    weak:
+      parseCommaSeparated(env.WAKE_WORD_WEAK_ALIASES) ??
+      (useDefaultVocabulary ? DEFAULT_WAKE_WORD_CONFIG.weak : []),
+    ambiguous:
+      parseCommaSeparated(env.WAKE_WORD_AMBIGUOUS_ALIASES) ??
+      (useDefaultVocabulary ? DEFAULT_WAKE_WORD_CONFIG.ambiguous : []),
+    attentionCues:
+      parseCommaSeparated(env.WAKE_ATTENTION_CUES) ?? DEFAULT_WAKE_WORD_CONFIG.attentionCues,
+  };
+  validateWakeWordConfig(config);
+  return config;
+}
 
 export interface AppConfig {
   apiKey: string;
@@ -32,6 +73,7 @@ export interface AppConfig {
   embeddingModel: string;
   /** sherpa-onnx用モデル一式を置くディレクトリ。既定は .models/ 。 */
   modelsDir: string;
+  wakeWordConfig: WakeWordConfig;
   discord?: {
     botToken: string;
     devGuildId?: string;
@@ -87,6 +129,7 @@ export function loadConfig(): AppConfig {
     qdrantURL: process.env.QDRANT_URL || "http://127.0.0.1:6333",
     embeddingModel: process.env.EMBEDDING_MODEL || "text-embedding-3-small",
     modelsDir: process.env.MODELS_DIR || ".models",
+    wakeWordConfig: loadWakeWordConfig(),
     discord: process.env.DISCORD_BOT_TOKEN
       ? {
           botToken: process.env.DISCORD_BOT_TOKEN,
@@ -106,5 +149,6 @@ export function describeConfig(cfg: AppConfig): string {
     `  main model : ${cfg.mainModel}`,
     `  judge model: ${cfg.judgeModel}`,
     `  api key    : ${cfg.apiKey.slice(0, 7)}...(${cfg.apiKey.length} chars)`,
+    `  wake words : ${cfg.wakeWordConfig.canonical.join(", ")}`,
   ].join("\n");
 }
