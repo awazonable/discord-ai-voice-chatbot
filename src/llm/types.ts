@@ -23,11 +23,17 @@ export interface ToolDefinition {
 }
 
 /** ツール呼び出しを実行し、結果を文字列で返す。例外を投げると呼び出し元でエラー扱いになる。 */
-export type ToolCallHandler = (name: string, argsJson: string) => Promise<string>;
+export type ToolCallHandler = (
+  name: string,
+  argsJson: string,
+  signal?: AbortSignal,
+) => Promise<string>;
 
 export interface ToolConfig {
   definitions: ToolDefinition[];
   onCall: ToolCallHandler;
+  /** このツール群をいつ・どう使うかをモデルへ伝える追加指示。 */
+  instructions?: string[];
 }
 
 /**

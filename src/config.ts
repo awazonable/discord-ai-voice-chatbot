@@ -19,6 +19,92 @@ export const DEFAULT_JUDGE_MODEL = "gpt-5.6-luna";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
+export type SearchConfig =
+  | { backend: "disabled" }
+  | {
+      backend: "searxng";
+      baseURL: string;
+      timeoutMs: number;
+      maxResults: number;
+    }
+  | {
+      backend: "openai";
+      model: string;
+      timeoutMs: number;
+      maxResults: number;
+    };
+
+function parsePositiveInteger(
+  value: string | undefined,
+  fallback: number,
+  name: string,
+  maximum: number,
+): number {
+  if (value === undefined || value.trim() === "") return fallback;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0 || parsed > maximum) {
+    throw new Error(`${name} は1〜${maximum}の整数で指定してください。`);
+  }
+  return parsed;
+}
+
+export function loadSearchConfig(
+  env: Environment = process.env,
+  mainModel = env.MAIN_MODEL ?? DEFAULT_MAIN_MODEL,
+): SearchConfig {
+  const backend = (env.WEB_SEARCH_BACKEND ?? "searxng").trim().toLowerCase();
+  if (backend === "disabled") return { backend };
+
+  const timeoutMs = parsePositiveInteger(
+    env.WEB_SEARCH_TIMEOUT_MS,
+    7_000,
+    "WEB_SEARCH_TIMEOUT_MS",
+    60_000,
+  );
+  const maxResults = parsePositiveInteger(
+    env.WEB_SEARCH_MAX_RESULTS,
+    5,
+    "WEB_SEARCH_MAX_RESULTS",
+    10,
+  );
+
+  if (backend === "searxng") {
+    const baseURL = env.SEARXNG_URL?.trim() || "http://127.0.0.1:8080";
+    let parsed: URL;
+    try {
+      parsed = new URL(baseURL);
+    } catch {
+      throw new Error("SEARXNG_URL は有効なURLで指定してください。");
+    }
+    if (
+      !["http:", "https:"].includes(parsed.protocol) ||
+      parsed.username ||
+      parsed.password
+    ) {
+      throw new Error("SEARXNG_URL は認証情報を含まないHTTP(S) URLで指定してください。");
+    }
+    return {
+      backend,
+      baseURL: parsed.toString().replace(/\/$/, ""),
+      timeoutMs,
+      maxResults,
+    };
+  }
+
+  if (backend === "openai") {
+    return {
+      backend,
+      model: env.WEB_SEARCH_MODEL?.trim() || mainModel,
+      timeoutMs,
+      maxResults,
+    };
+  }
+
+  throw new Error(
+    "WEB_SEARCH_BACKEND は searxng / openai / disabled のいずれかを指定してください。",
+  );
+}
+
 function parseCommaSeparated(value: string | undefined): string[] | undefined {
   if (!value?.trim()) return undefined;
   const values = [
@@ -74,6 +160,7 @@ export interface AppConfig {
   /** sherpa-onnx用モデル一式を置くディレクトリ。既定は .models/ 。 */
   modelsDir: string;
   wakeWordConfig: WakeWordConfig;
+  search: SearchConfig;
   discord?: {
     botToken: string;
     devGuildId?: string;
@@ -119,9 +206,10 @@ export function loadConfig(): AppConfig {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new MissingApiKeyError();
 
+  const mainModel = process.env.MAIN_MODEL ?? DEFAULT_MAIN_MODEL;
   return {
     apiKey,
-    mainModel: process.env.MAIN_MODEL ?? DEFAULT_MAIN_MODEL,
+    mainModel,
     judgeModel: process.env.JUDGE_MODEL ?? DEFAULT_JUDGE_MODEL,
     baseURL: process.env.OPENAI_BASE_URL || undefined,
     sushikiApiKey: process.env.SUSHIKI_API_KEY || undefined,
@@ -130,6 +218,7 @@ export function loadConfig(): AppConfig {
     embeddingModel: process.env.EMBEDDING_MODEL || "text-embedding-3-small",
     modelsDir: process.env.MODELS_DIR || ".models",
     wakeWordConfig: loadWakeWordConfig(),
+    search: loadSearchConfig(process.env, mainModel),
     discord: process.env.DISCORD_BOT_TOKEN
       ? {
           botToken: process.env.DISCORD_BOT_TOKEN,
@@ -150,5 +239,12 @@ export function describeConfig(cfg: AppConfig): string {
     `  judge model: ${cfg.judgeModel}`,
     `  api key    : ${cfg.apiKey.slice(0, 7)}...(${cfg.apiKey.length} chars)`,
     `  wake words : ${cfg.wakeWordConfig.canonical.join(", ")}`,
+    `  web search : ${
+      cfg.search.backend === "searxng"
+        ? `SearXNG (${cfg.search.baseURL})`
+        : cfg.search.backend === "openai"
+          ? `OpenAI (${cfg.search.model})`
+          : "無効"
+    }`,
   ].join("\n");
 }

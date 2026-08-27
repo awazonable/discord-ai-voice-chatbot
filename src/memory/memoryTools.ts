@@ -68,6 +68,9 @@ interface SearchArgs {
 export function createMemoryToolConfig(memory: LongTermMemory): ToolConfig {
   return {
     definitions: [SAVE_MEMORY, SEARCH_MEMORY],
+    instructions: [
+      "ユーザーの過去の発言・好み・予定について聞かれたときは、自分の記憶を信用せず、答える前に必ず search_memory を1回呼び出してください。呼び出す前に「知らない」と結論づけないでください。ユーザーについて覚えておくべき情報が出てきたら save_memory で保存してください。",
+    ],
     onCall: async (name, argsJson) => {
       if (name === "save_memory") {
         const args = JSON.parse(argsJson) as SaveArgs;
