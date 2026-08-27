@@ -53,8 +53,9 @@ VOICEVOX合成 → discord.js VoiceConnection でDiscordへストリーム再生
 Silero VADのローカル疎通は確認済み（`npm run stt:test` / `stt:stream-test`）。
 配布されているReazonSpeechモデルはオフライン専用のため、stt-design.mdの
 「partial: 0.5秒間隔で更新」は実現できず、「VAD区間検出→区間ごと一括認識」
-に設計変更した。ウェイクワード「ずんだもん」の認識精度に既知の課題あり
-（`docs/archive/openai-test-handoff.md`参照、対応は保留中）。
+に設計変更した。ウェイクワードは設定から複数登録でき、正式語は5文字以上に
+制限する。長いSTTセグメント中の正式語を検出し、短縮・同音誤認識は同じ話者の
+注意キューがある場合だけ回復する（`docs/archive/openai-test-handoff.md`参照）。
 
 ### 呼びかけ検知・ラウンド管理層（本PoCの成果）
 - **先行投機実行**: ウェイクワード検知後、猶予ウィンドウで待たず即座に本体LLMへ
@@ -119,27 +120,37 @@ LLMに渡すトークンを4種類に整理し、それぞれ扱いを変える�
 
 ## 未確定・要検討事項（次のステップ）
 
-1. STT〜呼びかけ検知〜LLM層の実配線: STT単体の疎通は確認済み
-   （`src/stt/`、`npm run stt:test` / `stt:stream-test`）。
-   `ZundamonSession.onFinalUtterance`への本配線はまだ。
-   ウェイクワード認識精度の課題は、Opusのレビュー（CLAUDE.md参照）を
-   踏まえて`detectWakeWord`を位置限定マッチ（発話冒頭3文字以内）に
-   変更し、「んだもん」まで欠落するケースも安全に許容できるようにした
-   （`test/testWakeword.ts`で口語表現「〜んだもん」との衝突が無いことを
-   確認）。VAD自体の音声欠落(pre-rollバッファ)は未着手だが、上記の
-   回避策により本配線をブロックする理由は無くなった
+1. ~~STT〜呼びかけ検知〜LLM層の実配線~~ → 実装済み。
+   `src/discordBot.ts`で`VoiceReceiverAdapter`から
+   `ZundamonSession.onFinalUtterance`へ接続し、応答をDiscord再生キューへ渡す。
+   STT単体の疎通（`npm run stt:test` / `stt:stream-test`）と型チェックは済み。
+   2026-08-27、実際のDiscord環境で一人の話者による約30秒の日本語会話ループを
+   実地検証し、発話ごとのSTT、STT→ウェイク検知→OpenAI LLM→ローカル
+   VOICEVOX→ffmpeg/Discord再生の一気通貫動作を確認した。修正後の約6分の
+   安定試験では30秒ループ10/10（正式語6/6、注意キュー付きの短縮・同音候補
+   4/4）と追加の手動呼びかけ2/2で応答した。短い`んだもん`単独発話には
+   反応せず、再生・circular-buffer・要約タイムアウトのエラーもなかった。
+   **未検証**: 複数人の同時発話。
+   ウェイクワードは`.env`から変更・追加でき、正式語をUnicode 5文字以上に
+   制限する。正式語は長いSTTセグメント中でも検出し、5文字未満の短縮・同音候補は
+   同じ話者の直前または同一セグメントに注意キューがある場合だけ受理する。
+   `test/testWakeword.ts`と`test/sessionWakeword.test.ts`で別キャラクター名、
+   複数登録、最長一致、話者分離、口語表現との衝突回避を確認済み。
 2. ~~VOICEVOX層との接続~~ → 解決済み。`onSentenceReady`を実際の合成+
    スピーカー再生(`RealPlaybackQueue`)につなぎ込み、`npm run cli`で
    テキスト入力→実音声再生まで通しで動作することを確認した
-3. discord.js音声受信・送信の実装: **送信・受信とも疎通確認済み**。
+3. ~~discord.js音声受信・送信と本体への配線~~ → 実装済み。
+   **個別の送信・受信は疎通確認済み**。
    送信は`npm run discord:test`（ログイン→ボイスチャンネル参加→VOICEVOX
    音声再生→テキストチャンネルへ報告）、受信は`npm run
    discord:receive-test`（実際の発話をSTTで認識、話者ごとに
    `MultiSpeakerStt`で分離）で確認した。native buildを避けopusscript
    (pure JS Opus) + libsodium-wrappers(pure JS/WASM暗号化)を採用。
-   **未対応**: `ZundamonSession`本体への配線。項目8のバグ修正は完了、
-   項目1のウェイクワード課題も回避策を入れたため、配線自体はいつでも
-   着手できる状態
+   `src/discordBot.ts`と`src/discord/`で`ZundamonSession`本体への配線、
+   Discord向け再生キュー、終了処理まで実装済み。再生キューの自動テストは
+   `npm run test:discord-playback`で確認できる。
+   上記の2026-08-27実地検証で、音声受信→STT→セッション→音声再生の
+   エンドツーエンド動作を確認済み（ffmpeg 9.0.1）。複数人の同時発話は未検証。
 4. ~~記憶DBのスキーマ・ベクトル化方式~~ → 解決済み（本ドキュメントの
    「記憶(DB)層」参照）。残課題: 長期記憶の自動保存判定の精度検証・
    短期記憶の圧縮閾値のチューニング
@@ -158,7 +169,7 @@ LLMに渡すトークンを4種類に整理し、それぞれ扱いを変える�
    これは意図した設計 — 詳細はstt-design.md「Discord音声受信との接続」）
 7. newRoundのバックログ破棄における「打ち切り意図」判定の精度検証
    （`docs/archive/openai-test-handoff.md`参照）
-8. ~~Discord音声受信のcircular-bufferバグ~~ → 修正済み。Opusのレビュー
+8. ~~Discord音声受信のcircular-bufferバグ~~ → 実装上の修正済み。Opusのレビュー
    （CLAUDE.md参照）でsherpa-onnx本体のソースから原因を確定: `Vad.flush()`
    がバッファを空にするだけでSileroモデルの内部状態(triggered_フラグ)を
    クリアしないupstreamのバグだった。`SttEngine.reset()`を実装し、
@@ -166,5 +177,10 @@ LLMに渡すトークンを4種類に整理し、それぞれ扱いを変える�
    （モデル自体は再ロードしない軽量な操作）。あわせて`OfflineRecognizer`
    （160MB超・ステートレス）を話者間で共有する設計に変更し
    （`MultiSpeakerStt`）、話者数に対するメモリ増加を防いだ。
-   **未検証**: 実際にDiscordで複数回発話してエラーが再発しないかの
-   実地確認はまだ（自動テスト・型チェックのみ実施済み）
+   2026-08-27の実環境テストで反復発話を確認し、circular-bufferエラーは
+   再発しなかった。
+9. 長期記憶（Qdrant）の実セッション検証。今回のテストではQdrantを停止していたため、
+   memory toolsは未検証。
+10. ウェイク前の雑談を会話ログへ保持する範囲の見直し。現在は周辺の雑談が
+    応答へ混ざることがあるため、直近の短い窓だけ保持するか、呼びかけ後の発話だけを
+    本体LLMへ渡すかを決めて実地評価する。

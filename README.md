@@ -3,9 +3,10 @@
 「ウェイクワード検知後のLLM呼び出しタイミング」の検証から始まったPoC。
 STT(sherpa-onnx)・TTS(VOICEVOX)・Discord(discord.js)・記憶(Qdrant)は
 それぞれ個別スクリプトで実際に動作することを確認済み（下記コマンド一覧）。
-ただし現時点では、それらを`ZundamonSession`本体に配線した一気通貫の
-Discordボット本体はまだ組み上がっていない（詳細・未対応事項は
-[`docs/overall-design.md`](docs/overall-design.md)参照）。
+`src/discordBot.ts`に、それらを`ZundamonSession`本体へ配線した
+Discordボットの本番エントリポイントを実装している。2026-08-27に開発用
+ボイスチャンネルで一人の話者による実環境の一気通貫動作を確認済み
+（詳細は[`docs/overall-design.md`](docs/overall-design.md)参照）。
 
 ## セットアップ
 
@@ -31,6 +32,55 @@ tar -xjf reazonspeech.tar.bz2 && rm reazonspeech.tar.bz2
 gh release download asr-models -R k2-fsa/sherpa-onnx -p "silero_vad_v5.onnx"
 ```
 
+### Discordボットを起動する前提
+
+`npm run discord:bot` は、次の準備が済んだ開発環境で実行する:
+
+- ローカルVOICEVOX（`VOICEVOX_BASE_URL`）または利用可能なsu-shiki API
+- 上記のSTTモデル一式（ReazonSpeech Zipformer + Silero VAD）
+- Discord Developer Portalで作成したBotと、対象サーバー・ボイスチャンネルへの権限
+- `.env`の`DISCORD_BOT_TOKEN`、`DEV_GUILD_ID`、`DEV_CHANNEL_ID_VOICE`
+- Discord音声再生に必要な`ffmpeg` 9.0.1をPATHに追加（導入済み）
+- 長期記憶を使う場合はQdrant（任意）。Botは`save_memory`/`search_memory`の
+  memory toolsを設定済みなので、これらを使うときだけQdrantを起動する
+
+ウェイクワードは`.env`で変更できます。既定のcanonicalは`ずんだもん,ずんちゃん`です。
+`WAKE_WORDS`をカンマ区切りで指定すると
+canonical候補を複数登録でき、必要なら`WAKE_WORD_WEAK_ALIASES`、
+`WAKE_WORD_AMBIGUOUS_ALIASES`、`WAKE_ATTENTION_CUES`も指定できます。
+canonicalはUnicode文字数5文字以上が必要で、短い設定値は起動時に設定エラーになります。
+`WAKE_WORDS`自体が未指定のときは現在の既定語彙を使います。`WAKE_WORDS`で名前を
+置き換えた場合、キャラクター固有の別名は引き継がれず、別名用の環境変数で明示した
+ものだけが有効になります。5文字未満の曖昧候補は注意キュー付きの
+場合だけ受理され、`ずんだ餅`や`ずんだもち`のような食べ物語はブロックされます。
+
+```bash
+npm run discord:bot
+```
+
+STTの確定した文字起こしをデバッグログへ出力する場合は、`--debug`を付けて起動する:
+
+```bash
+npm run discord:bot -- --debug
+```
+
+デバッグログには参加者の表示名・DiscordユーザーID・文字起こし本文が含まれる。
+文字起こしには参加者の発話が含まれる可能性があるため、ログの取り扱いに注意すること。
+
+`DEV_CHANNEL_ID_TEXT`と`DEV_USER_ID_ADMIN`は任意設定。個別の疎通・診断には
+`discord:test`、`discord:receive-test`、`stt:stream-test`、
+`test:discord-playback`など、下記の個別スクリプトを引き続き利用できる。
+
+2026-08-27の実環境テストでは、本番ボットが開発用ボイスチャンネルに参加し、
+約30秒の日本語会話ループでSTT→ウェイク検知→OpenAI LLM→ローカルVOICEVOX→
+ffmpeg/Discord再生の一気通貫動作を確認した。長いSTTセグメントの途中にある正式語も
+検出し、短縮・同音誤認識は同じ話者の`あっそうだ`等を補助条件として回復する。
+修正後の約6分の安定試験はループ10/10（正式語6/6、補助回復4/4）、追加の手動
+呼びかけ2/2で応答した。5文字未満の`んだもん`単独発話には反応せず、再生・
+circular-buffer・要約タイムアウトのエラーも発生しなかった。複数人の同時発話と、
+停止中だったQdrantを使うメモリ機能は未検証。なお、ウェイク前の雑談が会話ログへ
+入り応答内容に混ざるため、雑談コンテキストの保持方針は今後の調整項目。
+
 ## 実行方法
 
 コマンドは「APIを叩かないもの」→「実APIを叩くもの」の順に並べてある。
@@ -55,11 +105,16 @@ gh release download asr-models -R k2-fsa/sherpa-onnx -p "silero_vad_v5.onnx"
 | `npm run memory:session-demo` | 必要+Qdrant | 中 | 短期記憶の自動圧縮+長期記憶の想起を実セッションで確認 |
 | `npm run stt:test` | 不要 | なし | STT(ReazonSpeech Zipformer)の疎通確認。同梱テスト音声+TTS閉ループ |
 | `npm run stt:stream-test` | 必要(TTS用) | ごく少 | VAD+STTのストリーミング疑似投入テスト |
+| `npm run discord:bot` | 必要(Discord・VOICEVOX・STT・ffmpeg) | 中 | STT・セッション・TTSを接続した本番エントリポイント |
 | `npm run discord:test` | 必要(Discord+TTS) | 少 | Discord接続・ボイスチャンネル参加・音声再生・テキスト報告の疎通確認 |
 | `npm run discord:receive-test` | 必要(Discord) | なし | ボイスチャンネルでの発話を受信しSTTで認識(要: 人間が実際に話す) |
+| `npm run discord:capture-test` | 必要(Discord) | なし | Discord受信・Opusデコードのプライバシー安全な診断。音声は保存せず、duration/peak/RMSを報告 |
+| `npm run test:discord-playback` | 不要 | なし | Discord再生キューの順序・中断・切断復旧をフェイク接続で検証 |
 | `npm run test:judge-optimization` | 不要 | なし | ウェイクワードのみの発話でLLM判定がスキップされることを確認 |
 | `npm run test:multi-speaker` | 不要 | なし | 異なる話者の発言に別々のnameが付くことを確認 |
 | `npm run test:wakeword` | 不要 | なし | ウェイクワード検出が口語表現「〜んだもん」と衝突しないことを確認 |
+| `npm run test:session-wakeword` | 不要 | なし | 同一話者の注意キューによる誤認識回復と設定注入を確認 |
+| `npm run test:session-shutdown` | 不要 | なし | セッション終了時の後処理を検証 |
 
 ### 1. モックLLMでロジック検証（API課金なし）
 
@@ -200,8 +255,13 @@ src/
     multiSpeakerStt.ts       話者(speakerId)ごとに独立したSttEngineを管理
   sttTest.ts               STT単体の疎通テスト(同梱テスト音声+TTS閉ループ)
   sttStreamTest.ts          VAD+STTのストリーミング疑似投入テスト
+  discordBot.ts             STT・セッション・TTSを接続したDiscord Bot本体
+  discord/
+    voiceReceiver.ts        Discord音声受信→話者別STTアダプター
+    discordPlaybackQueue.ts Discord向け音声再生キュー
   discordTest.ts            Discord接続・ボイスチャンネル参加・音声再生の疎通テスト
   discordReceiveTest.ts     Discordボイスチャンネルの音声受信+STT疎通テスト
+  discordCaptureTest.ts     Discord受信・Opusデコードのプライバシー安全な診断（音声は保存せずduration/peak/RMSを報告）
   scenarios.ts          モックLLMでの自動シナリオテスト
   scenarioRunner.ts     シナリオ定義と実行（real / fake で共用）
   realScenarios.ts      実APIでのシナリオ実行エントリ
@@ -219,6 +279,8 @@ test/
   testJudgeOptimization.ts 判定コスト最適化(ウェイクワードのみの発話でLLM省略)の検証
   testMultiSpeaker.ts     複数話者の発言がnameで区別されることの検証
   testWakeword.ts         ウェイクワード検出の位置限定マッチの検証
+  discordPlaybackQueue.test.ts Discord再生キューの単体テスト
+  sessionShutdown.test.ts セッション終了時の後処理の回帰テスト
 ```
 
 ### APIキー無しで preflight / scenarios:real を試す
