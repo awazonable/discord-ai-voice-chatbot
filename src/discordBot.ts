@@ -16,6 +16,11 @@ import { OpenAILLMClient } from "./llm/openaiClient.js";
 import { EmbeddingClient } from "./memory/embeddings.js";
 import { LongTermMemory } from "./memory/longTermMemory.js";
 import { createMemoryToolConfig } from "./memory/memoryTools.js";
+import { mergeToolConfigs } from "./llm/toolConfig.js";
+import {
+  createSearchProvider,
+  createWebSearchToolConfig,
+} from "./webSearchTools.js";
 import { MultiSpeakerStt } from "./stt/multiSpeakerStt.js";
 import { ZundamonSession } from "./session/zundamonSession.js";
 import { DiscordPlaybackQueue } from "./discord/discordPlaybackQueue.js";
@@ -143,6 +148,14 @@ async function main(): Promise<void> {
       embeddings,
     });
     const memoryTools = createMemoryToolConfig(memory);
+    const searchProvider = createSearchProvider(cfg.search, {
+      apiKey: cfg.apiKey,
+      openAIBaseURL: cfg.baseURL,
+    });
+    const tools = mergeToolConfigs(
+      memoryTools,
+      searchProvider ? createWebSearchToolConfig(searchProvider) : undefined,
+    );
     const tts = createTTSClient(cfg);
     const zundamonSpeaker = await tts
       .listSpeakers()
@@ -221,7 +234,7 @@ async function main(): Promise<void> {
           console.error(`[セッションエラー: ${context}]`, error),
       },
       {
-        tools: memoryTools,
+        tools,
         wakeWordConfig: cfg.wakeWordConfig,
       }
     );

@@ -161,7 +161,7 @@ export class OpenAILLMClient implements LLMClient {
       for (const tc of toolCalls) {
         let result: string;
         try {
-          result = await tools.onCall(tc.name, tc.args);
+          result = await tools.onCall(tc.name, tc.args, signal);
         } catch (err) {
           result = `エラー: ${err instanceof Error ? err.message : String(err)}`;
         }

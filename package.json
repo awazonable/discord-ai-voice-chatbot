@@ -21,6 +21,9 @@
     "discord:test": "tsx src/discordTest.ts",
     "discord:receive-test": "tsx src/discordReceiveTest.ts",
     "discord:capture-test": "tsx src/discordCaptureTest.ts",
+    "search:up": "docker compose -f infra/searxng/compose.yml up -d",
+    "search:down": "docker compose -f infra/searxng/compose.yml down",
+    "search:smoke": "tsx src/searchSmokeTest.ts",
     "test:discord-playback": "tsx test/discordPlaybackQueue.test.ts",
     "test:fake": "tsx test/runAgainstFake.ts",
     "test:tts-fake": "tsx test/runTTSErrorTests.ts",
@@ -29,6 +32,7 @@
     "test:wakeword": "tsx test/testWakeword.ts",
     "test:session-wakeword": "tsx test/sessionWakeword.test.ts",
     "test:session-shutdown": "tsx test/sessionShutdown.test.ts",
+    "test:web-search": "tsx test/searchProviders.test.ts && tsx test/searchTools.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [],
