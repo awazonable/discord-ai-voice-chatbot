@@ -123,7 +123,7 @@ async function runCase(
   return ok;
 }
 
-async function main() {
+async function main(): Promise<number> {
   console.log("=== SushikiTTSClient 異常系テスト(フェイクサーバ) ===\n");
 
   const results: boolean[] = [];
@@ -143,10 +143,15 @@ async function main() {
 
   const failed = results.filter((ok) => !ok).length;
   console.log(`\n${failed === 0 ? "PASS" : "FAIL"}: ${results.length - failed}/${results.length}`);
-  process.exit(failed > 0 ? 1 : 0);
+  return failed > 0 ? 1 : 0;
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+main().then(
+  (exitCode) => {
+    process.exitCode = exitCode;
+  },
+  (err) => {
+    console.error(err);
+    process.exitCode = 1;
+  }
+);
