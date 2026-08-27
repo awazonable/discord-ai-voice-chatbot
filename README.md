@@ -22,6 +22,12 @@ cp .env.example .env
 `docker run -p 6333:6333 qdrant/qdrant`）。既定では`http://127.0.0.1:6333`
 に接続する。
 
+Web検索は既定でローカルSearXNG (`http://127.0.0.1:8080`) を使う。
+SearXNG側でJSON出力を有効にしてから起動すること。準備方法、OpenAI組み込み検索
+への切り替え、安全上の境界は[`docs/web-search.md`](docs/web-search.md)を参照。
+検索を使わず起動する場合は`.env`へ`WEB_SEARCH_BACKEND=disabled`を設定する。
+Dockerが使える開発環境では`npm run search:up`でローカル構成を起動できる。
+
 STT(`stt:*`)を使う場合はモデルを`.models/`に置く（gitignore済み、初回のみ）:
 
 ```bash
@@ -43,6 +49,8 @@ gh release download asr-models -R k2-fsa/sherpa-onnx -p "silero_vad_v5.onnx"
 - Discord音声再生に必要な`ffmpeg` 9.0.1をPATHに追加（導入済み）
 - 長期記憶を使う場合はQdrant（任意）。Botは`save_memory`/`search_memory`の
   memory toolsを設定済みなので、これらを使うときだけQdrantを起動する
+- Web検索を使う場合はSearXNG（既定）またはOpenAI Web Search。
+  SearXNG未起動の環境では`WEB_SEARCH_BACKEND=disabled`にする
 
 ウェイクワードは`.env`で変更できます。既定のcanonicalは`ずんだもん,ずんちゃん`です。
 `WAKE_WORDS`をカンマ区切りで指定すると
@@ -92,6 +100,7 @@ circular-buffer・要約タイムアウトのエラーも発生しなかった�
 | `npm run scenarios` | 不要 | なし | モックLLMでロジックだけ検証 |
 | `npm run test:fake` | 不要 | なし | **OpenAI SDK・SSE・中断まで含めた実コード経路**をローカルのフェイクサーバで検証 |
 | `npm run typecheck` | 不要 | なし | 型チェック |
+| `npm run test:web-search` | 不要 | なし | 検索プロバイダー、ツール統合、設定をフェイクで検証 |
 | `npm run preflight` | 必要 | ごく少 | 認証・モデル名の実在確認・レイテンシ実測 |
 | `npm run scenarios:real` | 必要 | 少 | 実APIで4シナリオを自動実行 |
 | `npm run cli` | 必要 | 少 | 実APIで対話的に検証 |

@@ -76,8 +76,9 @@ Silero VADのローカル疎通は確認済み（`npm run stt:test` / `stt:strea
   - function calling・vision入力・262K文脈対応
   - vLLM/SGLangでOpenAI互換エンドポイントを立てられるため、SDKのbase_url差し替えのみで移行可能
   - VRAM目安 22GB前後（量子化次第）
-- ツール定義（想定）:
-  - `web_search` — ブラウザ検索
+- ツール定義:
+  - `web_search` — 実行環境側の`SearchProvider`を使うWeb検索。既定は
+    SearXNG、MockとOpenAI Web Searchへ交換可能。詳細は`docs/web-search.md`
   - `save_memory` / `search_memory` — DB保存・検索（記憶）
   - `capture_obs_screenshot` — OBS WebSocket経由のスクショ取得
   - `read_discord_chat` / `search_discord_history` — Discordチャット閲覧・履歴検索
@@ -184,3 +185,7 @@ LLMに渡すトークンを4種類に整理し、それぞれ扱いを変える�
 10. ウェイク前の雑談を会話ログへ保持する範囲の見直し。現在は周辺の雑談が
     応答へ混ざることがあるため、直近の短い窓だけ保持するか、呼びかけ後の発話だけを
     本体LLMへ渡すかを決めて実地評価する。
+11. ~~Web検索のモデル依存解消~~ → `SearchProvider`境界と`web_search`ツールを
+    実装。既定はローカルSearXNG、試験用Mock、任意のOpenAI Responses API検索を
+    同じ結果形式で差し替えられる。天気専用ツールとMCPサーバー化は必要性が出た
+    段階で追加する。SearXNGを使ったDiscord実地検索は未検証。
